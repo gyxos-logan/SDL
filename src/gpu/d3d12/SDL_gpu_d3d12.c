@@ -1277,6 +1277,8 @@ static bool D3D12_Wait(SDL_GPURenderer *driverData);
 static bool D3D12_WaitForFences(SDL_GPURenderer *driverData, bool waitAll, SDL_GPUFence *const *fences, Uint32 numFences);
 static void D3D12_INTERNAL_ReleaseBlitPipelines(SDL_GPURenderer *driverData);
 
+static SDL_GPUResourceSet *D3D12_CreateResourceSet(SDL_GPURenderer *driverData, const SDL_GPUResourceSetCreateInfo *createinfo);
+
 // Helpers
 
 static Uint32 D3D12_INTERNAL_Align(Uint32 location, Uint32 alignment)
@@ -10108,6 +10110,13 @@ SDL_GPUBootstrap D3D12Driver = {
     D3D12_PrepareDriver,
     D3D12_CreateDevice
 };
+
+static SDL_GPUResourceSet *D3D12_CreateResourceSet(
+    SDL_GPURenderer *driverData,
+    const SDL_GPUResourceSetCreateInfo *createinfo)
+{
+    return NULL;
+}
 
 #endif // SDL_GPU_D3D12
 

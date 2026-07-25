@@ -1301,9 +1301,9 @@ static bool VULKAN_WaitForFences(SDL_GPURenderer *driverData, bool waitAll, SDL_
 static bool VULKAN_Submit(SDL_GPUCommandBuffer *commandBuffer);
 static SDL_GPUCommandBuffer *VULKAN_AcquireCommandBuffer(SDL_GPURenderer *driverData);
 
-
+typedef struct VulkanResourceSet VulkanResourceSet;
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout);
-
+static SDL_GPUResourceSet *VULKAN_CreateResourceSet(SDL_GPURenderer *driverData, const SDL_GPUResourceSetCreateInfo *createinfo);
 
 // Error Handling
 
@@ -13811,8 +13811,6 @@ SDL_GPUBootstrap VulkanDriver = {
     VULKAN_CreateDevice
 };
 
-typedef struct VulkanResourceSet VulkanResourceSet;
-
 struct VulkanResourceSet
 {
     VkDescriptorPool descriptorPool;
@@ -13820,11 +13818,9 @@ struct VulkanResourceSet
 
     Uint32 num_samplers;
     Uint32 num_resources;
-
-
 };
 
-static VulkanResourceSet *VULKAN_CreateResourceSet(
+static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     SDL_GPURenderer *driverData,
     const SDL_GPUResourceSetCreateInfo *createinfo)
 {
@@ -13898,7 +13894,7 @@ static VulkanResourceSet *VULKAN_CreateResourceSet(
     // TODO: Cleanup on failure
     CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, NULL);
 
-    return resourceSet;
+    return (SDL_GPUResourceSet*)resourceSet;
 }
 
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
