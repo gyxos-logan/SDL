@@ -1282,6 +1282,11 @@ struct VulkanRenderer
 #define VULKAN_DEVICE_FUNCTION(func) \
     PFN_##func func;
 #include "SDL_gpu_vulkan_vkfuncs.h"
+
+
+    bool bindlessResources;
+    
+
 };
 
 // Forward declarations
@@ -12841,6 +12846,17 @@ static bool VULKAN_INTERNAL_PrepareVulkan(
     features->desiredVulkan10DeviceFeatures.independentBlend = VK_TRUE;
     features->desiredVulkan10DeviceFeatures.sampleRateShading = VK_TRUE;
     features->desiredVulkan10DeviceFeatures.imageCubeArray = VK_TRUE;
+
+    renderer->bindlessResources = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_BOOLEAN, false);
+
+    if (renderer->bindlessResources) {
+        features->desiredVulkan12DeviceFeatures.descriptorIndexing = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.runtimeDescriptorArray = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+        features->desiredVulkan12DeviceFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+    }
 
     // Handle opt-in device features
     VULKAN_INTERNAL_AddOptInVulkanOptions(props, renderer, features);
