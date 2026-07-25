@@ -4668,18 +4668,26 @@ extern SDL_DECLSPEC SDL_GPUResourceSet * SDLCALL SDL_CreateGPUResourceSet(
 extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_AllocateGPUResource(SDL_GPUResourceSet *resource_set);
 
 extern SDL_DECLSPEC void SDLCALL SDL_ReleaseGPUResource(
-    SDL_GPUResourceSet *resource_set,
+    SDL_GPUDevice *device,
     SDL_GPUResource *resource);
     
 extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceSampler(
+    SDL_GPUDevice *device,
     SDL_GPUResource *resource,
     SDL_GPUTexture *texture);
 
-extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceTexture(
+extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceSampledTexture(
+    SDL_GPUDevice *device,
     SDL_GPUResource *resource,
     SDL_GPUTexture *texture);
 
-extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceBuffer(
+extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceStorageTexture(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource,
+    SDL_GPUTexture *texture);
+
+extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_SetGPUResourceStorageBuffer(
+    SDL_GPUDevice *device,
     SDL_GPUResource *resource,
     SDL_GPUBuffer *buffer);
 
@@ -4689,6 +4697,7 @@ extern SDL_DECLSPEC SDL_GPUResource * SDLCALL SDL_BindGPUResourceSet(
     bool cycle);
 
 extern SDL_DECLSPEC bool * SDLCALL SDL_ResolveGPUResource(
+    SDL_GPUDevice *device,
     SDL_GPUResource *resource,
     Uint32 *slot);
 
