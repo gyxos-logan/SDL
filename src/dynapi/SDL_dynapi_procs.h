@@ -1337,3 +1337,5 @@ SDL_DYNAPI_PROC(SDL_FormFactor,SDL_GetDeviceFormFactor,(void),(),return)
 SDL_DYNAPI_PROC(const char*,SDL_GetDeviceFormFactorName,(SDL_FormFactor a),(a),return)
 SDL_DYNAPI_PROC(bool,SDL_IsUbuntuTouch,(void),(),return)
 SDL_DYNAPI_PROC(int,SDL_GetNumProperties,(SDL_PropertiesID a),(a),return)
+
+SDL_DYNAPI_PROC(SDL_GPUResourceSet*,SDL_CreateGPUResourceSet,(SDL_GPUDevice *a, const SDL_GPUResourceSetCreateInfo *b),(a,b),return)

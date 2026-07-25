@@ -1329,3 +1329,5 @@
 #define SDL_GetDeviceFormFactorName SDL_GetDeviceFormFactorName_REAL
 #define SDL_IsUbuntuTouch SDL_IsUbuntuTouch_REAL
 #define SDL_GetNumProperties SDL_GetNumProperties_REAL
+
+#define SDL_CreateGPUResourceSet SDL_CreateGPUResourceSet_REAL

@@ -3631,3 +3631,24 @@ XrResult SDL_CreateGPUXRSwapchain(
 
     return device->CreateXRSwapchain(device->driverData, session, createinfo, format, swapchain, textures);
 }
+
+SDL_GPUResourceSet *SDL_CreateGPUResourceSet(
+    SDL_GPUDevice *device,
+    const SDL_GPUResourceSetCreateInfo *createinfo)
+{
+    CHECK_DEVICE_MAGIC(device, NULL);
+
+    CHECK_PARAM(createinfo == NULL) {
+        SDL_InvalidParamError("createinfo");
+        return NULL;
+    }
+
+    if (device->CreateResourceSet == NULL) {
+        SDL_SetError("Driver does not support bindless resources");
+        return NULL;
+    }
+
+    return device->CreateResourceSet(
+        device->driverData,
+        createinfo);
+}

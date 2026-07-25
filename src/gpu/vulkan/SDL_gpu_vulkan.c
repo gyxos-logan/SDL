@@ -13824,14 +13824,15 @@ struct VulkanResourceSet
 
 };
 
-static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
-    VulkanRenderer *renderer,
+static VulkanResourceSet *VULKAN_CreateResourceSet(
+    SDL_GPURenderer *driverData,
     const SDL_GPUResourceSetCreateInfo *createinfo)
 {
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+    
     VulkanResourceSet *resourceSet;
     VkDescriptorPoolCreateInfo descriptorPoolInfo;
     VkDescriptorPoolSize poolSizes[4];
-    VkDescriptorSetLayout setLayouts[4];
     Uint32 descriptorCounts[4];
     VkResult vulkanResult;
 

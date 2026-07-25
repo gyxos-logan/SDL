@@ -1124,6 +1124,11 @@ struct SDL_GPUDevice
     bool default_enable_depth_clip;
     bool validate_feature_depth_clamp_disabled;
     bool validate_feature_anisotropy_disabled;
+
+    SDL_GPUResourceSet *(*CreateResourceSet)(
+        SDL_GPURenderer *driverData,
+        const SDL_GPUResourceSetCreateInfo *createinfo);
+
 };
 
 #define ASSIGN_DRIVER_FUNC(func, name) \
