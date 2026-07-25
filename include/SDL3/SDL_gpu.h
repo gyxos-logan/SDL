@@ -4648,7 +4648,8 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 
 
 
-#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_BOOLEAN                "SDL.gpu.device.create.feature.bindless_resources"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_BOOLEAN                "SDL.gpu.device.create.feature.bindlessresources"
+#define SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING                 "SDL.gpu.resourceset.create.name"
 
 typedef struct SDL_GPUResourceSet SDL_GPUResourceSet;
 typedef struct SDL_GPUResource SDL_GPUResource;

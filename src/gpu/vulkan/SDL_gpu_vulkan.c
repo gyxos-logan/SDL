@@ -1301,10 +1301,6 @@ static bool VULKAN_WaitForFences(SDL_GPURenderer *driverData, bool waitAll, SDL_
 static bool VULKAN_Submit(SDL_GPUCommandBuffer *commandBuffer);
 static SDL_GPUCommandBuffer *VULKAN_AcquireCommandBuffer(SDL_GPURenderer *driverData);
 
-typedef struct VulkanResourceSet VulkanResourceSet;
-static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout);
-static SDL_GPUResourceSet *VULKAN_CreateResourceSet(SDL_GPURenderer *driverData, const SDL_GPUResourceSetCreateInfo *createinfo);
-
 // Error Handling
 
 static inline const char *VkErrorMessages(VkResult code)
@@ -13380,6 +13376,233 @@ static XrResult VULKAN_CreateXRSession(
 #endif
 }
 
+typedef struct VulkanResourceSetContainer VulkanResourceSetContainer;
+typedef struct VulkanResourceSet VulkanResourceSet;
+
+struct VulkanResourceSet
+{
+    VulkanResourceSetContainer *container;
+    Uint32 containerIndex;
+
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet descriptorSets[4];
+
+    // VulkanMemoryUsedRegion *usedRegion;
+
+    // VkImage image;
+    // VkImageView fullView; // used for samplers and storage reads
+    // VkComponentMapping swizzle;
+    // VkImageAspectFlags aspectFlags;
+    // Uint32 depth; // used for cleanup only
+
+    // // used to avoid indirection on barriers
+    // Uint32 levelCount;
+    // Uint32 layerCount;
+    // SDL_GPUResourceSetType type;
+
+    // // FIXME: It'd be nice if we didn't have to have this on the texture...
+    // SDL_GPUResourceSetUsageFlags usage; // used for defrag transitions only.
+
+    // Uint32 subresourceCount;
+    // VulkanResourceSetSubresource *subresources;
+
+    // bool markedForDestroy; // so that defrag doesn't double-free
+    // bool externallyManaged; // true for XR swapchain images
+    SDL_AtomicInt referenceCount;
+};
+
+struct VulkanResourceSetContainer
+{
+    SDL_GPUResourceSetCreateInfo info;
+
+    VulkanResourceSet *activeResourceSet;
+
+    Uint32 resourceSetCapacity;
+    Uint32 resourceSetCount;
+    VulkanResourceSet **resourceSets;
+
+    char *debugName;
+    // bool canBeCycled;
+    // bool externallyManaged; // true for XR swapchain images
+};
+
+static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
+    VulkanRenderer *renderer,
+    const SDL_GPUResourceSetCreateInfo *createinfo)
+{
+    VulkanResourceSet *resourceSet;
+    VkDescriptorPoolCreateInfo descriptorPoolInfo;
+    VkDescriptorPoolSize poolSizes[4];
+    Uint32 descriptorCounts[4];
+    VkResult vulkanResult;
+
+    if (!renderer->bindlessResources) {
+        SDL_SetError("Bindless resources are not enabled for this device");
+        return NULL;
+    }
+
+    if (createinfo->num_samplers > 65536 || createinfo->num_resources > 65536) {
+        SDL_SetError("Bindless resources cannot exceed 65536 samplers or resources");
+        return NULL;
+    }
+
+    resourceSet = SDL_calloc(1, sizeof(VulkanResourceSet));
+
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[0].descriptorCount = createinfo->num_samplers;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[1].descriptorCount = createinfo->num_resources;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[2].descriptorCount = createinfo->num_resources;
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = createinfo->num_resources;
+
+    descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    descriptorPoolInfo.pNext = NULL;
+    descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    descriptorPoolInfo.maxSets = 4;
+    descriptorPoolInfo.poolSizeCount = 4;
+    descriptorPoolInfo.pPoolSizes = poolSizes;
+
+    vulkanResult = renderer->vkCreateDescriptorPool(
+        renderer->logicalDevice,
+        &descriptorPoolInfo,
+        NULL,
+        &resourceSet->descriptorPool);
+
+    // TODO: Cleanup on failure
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, NULL);
+
+    descriptorCounts[0] = createinfo->num_samplers;
+    descriptorCounts[1] = createinfo->num_resources;
+    descriptorCounts[2] = createinfo->num_resources;
+    descriptorCounts[3] = createinfo->num_resources;
+
+    VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountAllocateInfo;
+    variableDescriptorCountAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    variableDescriptorCountAllocateInfo.pNext = NULL;
+    variableDescriptorCountAllocateInfo.descriptorSetCount = 4;
+    variableDescriptorCountAllocateInfo.pDescriptorCounts = descriptorCounts;
+
+    VkDescriptorSetAllocateInfo allocateInfo;
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.pNext = &variableDescriptorCountAllocateInfo;
+    allocateInfo.descriptorPool = resourceSet->descriptorPool;
+    allocateInfo.descriptorSetCount = 4;
+    allocateInfo.pSetLayouts = renderer->bindlessDescriptorSetLayouts;
+
+    vulkanResult = renderer->vkAllocateDescriptorSets(renderer->logicalDevice, &allocateInfo, resourceSet->descriptorSets);
+
+    // TODO: Cleanup on failure
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, NULL);
+
+    return resourceSet;
+}
+
+static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
+    SDL_GPURenderer *driverData,
+    const SDL_GPUResourceSetCreateInfo *createinfo)
+{
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+    VulkanResourceSet *resourceSet;
+    VulkanResourceSetContainer *container;
+
+    resourceSet = VULKAN_INTERNAL_CreateResourceSet(
+        renderer,
+        createinfo);
+
+    if (resourceSet == NULL) {
+        return NULL;
+    }
+
+    container = SDL_malloc(sizeof(VulkanResourceSetContainer));
+
+    // Copy properties so we don't lose information when the client destroys them
+    container->info = *createinfo;
+    container->info.props = SDL_CreateProperties();
+    if (createinfo->props) {
+        SDL_CopyProperties(createinfo->props, container->info.props);
+    }
+
+    // container->canBeCycled = true;
+    container->activeResourceSet = resourceSet;
+    container->resourceSetCapacity = 1;
+    container->resourceSetCount = 1;
+    container->resourceSets = SDL_malloc(
+        container->resourceSetCapacity * sizeof(VulkanResourceSet *));
+    container->resourceSets[0] = container->activeResourceSet;
+    container->debugName = NULL;
+
+    if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING)) {
+        container->debugName = SDL_strdup(SDL_GetStringProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING, NULL));
+    }
+
+    resourceSet->container = container;
+    resourceSet->containerIndex = 0;
+
+    // Let's transition to the default barrier state, because for some reason Vulkan doesn't let us do that with initialLayout.
+    // Only do this after "container" is set, so the resourceSet
+    // is fully initialized before any Submit that could trigger defrag.
+    // {
+    //     VulkanCommandBuffer *barrierCommandBuffer = (VulkanCommandBuffer *)VULKAN_AcquireCommandBuffer((SDL_GPURenderer *)renderer);
+    //     VULKAN_INTERNAL_ResourceSetTransitionToDefaultUsage(
+    //         renderer,
+    //         barrierCommandBuffer,
+    //         VULKAN_TEXTURE_USAGE_MODE_UNINITIALIZED,
+    //         resourceSet);
+
+    //     VULKAN_INTERNAL_TrackResourceSet(barrierCommandBuffer, resourceSet);
+
+    //     if (!VULKAN_Submit((SDL_GPUCommandBuffer *)barrierCommandBuffer)) {
+    //         VULKAN_ReleaseResourceSet((SDL_GPURenderer *)renderer, (SDL_GPUResourceSet *)container);
+    //         return NULL;
+    //     }
+    // }
+
+    return (SDL_GPUResourceSet *)container;
+}
+
+
+
+static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
+{
+    VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBinding;
+
+    descriptorSetLayoutBinding.binding = 0;
+    descriptorSetLayoutBinding.descriptorCount = 65536; // TODO: Detect the maximum number supported by the device
+    descriptorSetLayoutBinding.descriptorType = descriptorType;
+    descriptorSetLayoutBinding.stageFlags = shaderStage;
+    descriptorSetLayoutBinding.pImmutableSamplers = NULL;
+
+    VkDescriptorBindingFlags descriptorBindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo;
+    descriptorSetLayoutBindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    descriptorSetLayoutBindingFlagsCreateInfo.pNext = NULL;
+    descriptorSetLayoutBindingFlagsCreateInfo.bindingCount = 1;
+    descriptorSetLayoutBindingFlagsCreateInfo.pBindingFlags = &descriptorBindingFlags;
+
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
+    descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutCreateInfo.pNext = &descriptorSetLayoutBindingFlagsCreateInfo;
+    descriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    descriptorSetLayoutCreateInfo.bindingCount = 1;
+    descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBinding;
+
+    VkResult vulkanResult = renderer->vkCreateDescriptorSetLayout(
+        renderer->logicalDevice,
+        &descriptorSetLayoutCreateInfo,
+        NULL,
+        descriptorSetLayout);
+
+    if (vulkanResult != VK_SUCCESS) {
+        CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorSetLayout, false);
+    }
+
+    return true;
+}
+
 static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
 {
     VulkanRenderer *renderer;
@@ -13810,131 +14033,5 @@ SDL_GPUBootstrap VulkanDriver = {
     VULKAN_PrepareDriver,
     VULKAN_CreateDevice
 };
-
-struct VulkanResourceSet
-{
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSet descriptorSets[4];
-
-    Uint32 num_samplers;
-    Uint32 num_resources;
-};
-
-static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
-    SDL_GPURenderer *driverData,
-    const SDL_GPUResourceSetCreateInfo *createinfo)
-{
-    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
-    
-    VulkanResourceSet *resourceSet;
-    VkDescriptorPoolCreateInfo descriptorPoolInfo;
-    VkDescriptorPoolSize poolSizes[4];
-    Uint32 descriptorCounts[4];
-    VkResult vulkanResult;
-
-    if (!renderer->bindlessResources) {
-        SDL_SetError("Bindless resources are not enabled for this device");
-        return NULL;
-    }
-
-    if (createinfo->num_samplers > 65536 || createinfo->num_resources > 65536) {
-        SDL_SetError("Bindless resources cannot exceed 65536 samplers or resources");
-        return NULL;
-    }
-
-    resourceSet = SDL_calloc(1, sizeof(VulkanResourceSet));
-    resourceSet->num_samplers = createinfo->num_samplers;
-    resourceSet->num_resources = createinfo->num_resources;
-
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-    poolSizes[0].descriptorCount = createinfo->num_samplers;
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    poolSizes[1].descriptorCount = createinfo->num_resources;
-    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[2].descriptorCount = createinfo->num_resources;
-    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[3].descriptorCount = createinfo->num_resources;
-
-    descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    descriptorPoolInfo.pNext = NULL;
-    descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-    descriptorPoolInfo.maxSets = 4;
-    descriptorPoolInfo.poolSizeCount = 4;
-    descriptorPoolInfo.pPoolSizes = poolSizes;
-
-    vulkanResult = renderer->vkCreateDescriptorPool(
-        renderer->logicalDevice,
-        &descriptorPoolInfo,
-        NULL,
-        &resourceSet->descriptorPool);
-
-    // TODO: Cleanup on failure
-    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, NULL);
-
-    descriptorCounts[0] = createinfo->num_samplers;
-    descriptorCounts[1] = createinfo->num_resources;
-    descriptorCounts[2] = createinfo->num_resources;
-    descriptorCounts[3] = createinfo->num_resources;
-
-    VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountAllocateInfo;
-    variableDescriptorCountAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-    variableDescriptorCountAllocateInfo.pNext = NULL;
-    variableDescriptorCountAllocateInfo.descriptorSetCount = 4;
-    variableDescriptorCountAllocateInfo.pDescriptorCounts = descriptorCounts;
-
-    VkDescriptorSetAllocateInfo allocateInfo;
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.pNext = &variableDescriptorCountAllocateInfo;
-    allocateInfo.descriptorPool = resourceSet->descriptorPool;
-    allocateInfo.descriptorSetCount = 4;
-    allocateInfo.pSetLayouts = renderer->bindlessDescriptorSetLayouts;
-
-    vulkanResult = renderer->vkAllocateDescriptorSets(renderer->logicalDevice, &allocateInfo, resourceSet->descriptorSets);
-
-    // TODO: Cleanup on failure
-    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, NULL);
-
-    return (SDL_GPUResourceSet*)resourceSet;
-}
-
-static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
-{
-    VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBinding;
-
-    descriptorSetLayoutBinding.binding = 0;
-    descriptorSetLayoutBinding.descriptorCount = 65536; // TODO: Detect the maximum number supported by the device
-    descriptorSetLayoutBinding.descriptorType = descriptorType;
-    descriptorSetLayoutBinding.stageFlags = shaderStage;
-    descriptorSetLayoutBinding.pImmutableSamplers = NULL;
-
-    VkDescriptorBindingFlags descriptorBindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
-
-    VkDescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo;
-    descriptorSetLayoutBindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    descriptorSetLayoutBindingFlagsCreateInfo.pNext = NULL;
-    descriptorSetLayoutBindingFlagsCreateInfo.bindingCount = 1;
-    descriptorSetLayoutBindingFlagsCreateInfo.pBindingFlags = &descriptorBindingFlags;
-
-    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
-    descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    descriptorSetLayoutCreateInfo.pNext = &descriptorSetLayoutBindingFlagsCreateInfo;
-    descriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-    descriptorSetLayoutCreateInfo.bindingCount = 1;
-    descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBinding;
-
-    VkResult vulkanResult = renderer->vkCreateDescriptorSetLayout(
-        renderer->logicalDevice,
-        &descriptorSetLayoutCreateInfo,
-        NULL,
-        descriptorSetLayout);
-
-    if (vulkanResult != VK_SUCCESS) {
-        CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorSetLayout, false);
-    }
-
-    return true;
-}
-
 
 #endif // SDL_GPU_VULKAN
