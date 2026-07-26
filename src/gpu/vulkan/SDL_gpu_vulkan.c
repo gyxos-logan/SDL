@@ -13574,15 +13574,15 @@ static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
     return resourceSet;
 }
 
-static void VULKAN_INTERNAL_CopyResourceSetToResourceSet(
+static void VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(
     VulkanRenderer *renderer,
-    VulkanResourceSet *source,
+    VulkanResourceSetContainer *container,
     VulkanResourceSet *destination)
 {
     VkCopyDescriptorSet copyDescriptorSets[4];
     Uint32 i;
 
-    VulkanResourceSetContainer *container = source->container;
+    VulkanResourceSet *source = container->activeResourceSet;
 
     for (i = 0; i < 4; i += 1) {
         copyDescriptorSets[i].sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
@@ -13615,7 +13615,7 @@ static void VULKAN_INTERNAL_CycleActiveResourceSet(
     for (Uint32 i = 0; i < container->resourceSetCount; i += 1) {
         resourceSet = container->resourceSets[i];
         if (SDL_GetAtomicInt(&resourceSet->referenceCount) == 0) {
-            VULKAN_INTERNAL_CopyResourceSetToResourceSet(renderer, container->activeResourceSet, resourceSet);
+            VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(renderer, container, resourceSet);
             container->activeResourceSet = resourceSet;
             return;
         }
@@ -13642,7 +13642,7 @@ static void VULKAN_INTERNAL_CycleActiveResourceSet(
     resourceSet->containerIndex = container->resourceSetCount;
     container->resourceSetCount += 1;
 
-    VULKAN_INTERNAL_CopyResourceSetToResourceSet(renderer, container->activeResourceSet, resourceSet);
+    VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(renderer, container, resourceSet);
     container->activeResourceSet = resourceSet;
 }
 
