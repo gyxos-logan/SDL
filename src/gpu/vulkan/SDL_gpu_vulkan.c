@@ -13902,11 +13902,11 @@ static bool VULKAN_ResolveResource(
                 VkWriteDescriptorSet writeDescriptorSet;
                 writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writeDescriptorSet.pNext = NULL;
-                writeDescriptorSet.dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+                writeDescriptorSet.dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_BUFFER];
                 writeDescriptorSet.dstBinding = 0;
                 writeDescriptorSet.dstArrayElement = newSlot;
                 writeDescriptorSet.descriptorCount = 1;
-                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 writeDescriptorSet.pImageInfo = NULL;
                 writeDescriptorSet.pBufferInfo = &bufferInfo;
                 writeDescriptorSet.pTexelBufferView = NULL;
