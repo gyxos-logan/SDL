@@ -1162,6 +1162,10 @@ typedef struct VulkanCommandBuffer
     bool isDefrag; // Whether this CB was created for defragging
 
     VulkanResourceSet *resourceSet;
+
+    VulkanResourceSet **usedResourceSets;
+    Sint32 usedResourceSetCount;
+    Sint32 usedResourceSetCapacity;
 } VulkanCommandBuffer;
 
 struct VulkanCommandPool
@@ -2640,6 +2644,19 @@ static void VULKAN_INTERNAL_TrackUniformBuffer(
         uniformBuffer->buffer);
 }
 
+static void VULKAN_INTERNAL_TrackResourceSet(
+    VulkanCommandBuffer *commandBuffer,
+    VulkanResourceSet *resourceSet)
+{
+    TRACK_RESOURCE(
+        resourceSet,
+        VulkanResourceSet *,
+        usedResourceSets,
+        usedResourceSetCount,
+        usedResourceSetCapacity,
+        resourceSet->referenceCount);
+}
+
 #undef TRACK_RESOURCE
 
 // Memory Barriers
@@ -3293,6 +3310,7 @@ static void VULKAN_INTERNAL_DestroyCommandPool(
         SDL_free(commandBuffer->usedComputePipelines);
         SDL_free(commandBuffer->usedFramebuffers);
         SDL_free(commandBuffer->usedUniformBuffers);
+        SDL_free(commandBuffer->usedResourceSets);
 
         SDL_free(commandBuffer);
     }
@@ -9677,6 +9695,11 @@ static bool VULKAN_INTERNAL_AllocateCommandBuffer(
     commandBuffer->usedUniformBuffers = SDL_malloc(
         commandBuffer->usedUniformBufferCapacity * sizeof(VulkanUniformBuffer *));
 
+    commandBuffer->usedResourceSetCapacity = 4;
+    commandBuffer->usedResourceSetCount = 0;
+    commandBuffer->usedResourceSets = SDL_malloc(
+        commandBuffer->usedResourceSetCapacity * sizeof(VulkanBuffer *));
+
     commandBuffer->swapchainRequested = false;
 
     commandBuffer->resourceSet = NULL;
@@ -10763,6 +10786,11 @@ static void VULKAN_INTERNAL_CleanCommandBuffer(
         (void)SDL_AtomicDecRef(&commandBuffer->usedFramebuffers[i]->referenceCount);
     }
     commandBuffer->usedFramebufferCount = 0;
+
+    for (Sint32 i = 0; i < commandBuffer->usedResourceSetCount; i += 1) {
+        (void)SDL_AtomicDecRef(&commandBuffer->usedResourceSets[i]->referenceCount);
+    }
+    commandBuffer->usedResourceSetCount = 0;
 
     // Reset presentation data
 
@@ -13546,6 +13574,45 @@ static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
     return resourceSet;
 }
 
+static void VULKAN_INTERNAL_CycleActiveResourceSet(
+    VulkanRenderer *renderer,
+    VulkanResourceSetContainer *container)
+{
+    VulkanResourceSet *resourceSet;
+
+    // If a previously-cycled resourceSet is available, we can use that.
+    for (Uint32 i = 0; i < container->resourceSetCount; i += 1) {
+        resourceSet = container->resourceSets[i];
+        if (SDL_GetAtomicInt(&resourceSet->referenceCount) == 0) {
+            container->activeResourceSet = resourceSet;
+            return;
+        }
+    }
+
+    // No resourceSet handle is available, create a new one.
+    resourceSet = VULKAN_INTERNAL_CreateResourceSet(
+        renderer,
+        &container->info);
+
+    if (!resourceSet) {
+        return;
+    }
+
+    EXPAND_ARRAY_IF_NEEDED(
+        container->resourceSets,
+        VulkanResourceSet *,
+        container->resourceSetCount + 1,
+        container->resourceSetCapacity,
+        container->resourceSetCapacity * 2);
+
+    container->resourceSets[container->resourceSetCount] = resourceSet;
+    resourceSet->container = container;
+    resourceSet->containerIndex = container->resourceSetCount;
+    container->resourceSetCount += 1;
+
+    container->activeResourceSet = resourceSet;
+}
+
 static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     SDL_GPURenderer *driverData,
     const SDL_GPUResourceSetCreateInfo *createinfo)
@@ -13736,9 +13803,17 @@ static void VULKAN_BindResourceSet(
     VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
     VulkanResourceSetContainer *container = (VulkanResourceSetContainer *)resourceSet;
 
-    vulkanCommandBuffer->resourceSet = container->activeResourceSet;
+    if (
+        cycle &&
+        SDL_GetAtomicInt(&container->activeResourceSet->referenceCount) > 0) {
+        VULKAN_INTERNAL_CycleActiveResourceSet(
+            vulkanCommandBuffer->renderer,
+            container);
+    }
 
-    // TODO: Support cycling
+    VULKAN_INTERNAL_TrackResourceSet(vulkanCommandBuffer, container->activeResourceSet);
+
+    vulkanCommandBuffer->resourceSet = container->activeResourceSet;
 }
 
 static bool VULKAN_ResolveResource(
