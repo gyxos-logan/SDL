@@ -3643,12 +3643,99 @@ SDL_GPUResourceSet *SDL_CreateGPUResourceSet(
         return NULL;
     }
 
-    if (device->CreateResourceSet == NULL) {
-        SDL_SetError("Driver does not support bindless resources");
-        return NULL;
-    }
+    // if (!device->bindlessResources) {
+    //     SDL_SetError("Driver does not support bindless resources");
+    //     return NULL;
+    // }
 
     return device->CreateResourceSet(
         device->driverData,
         createinfo);
+}
+
+void SDL_ReleaseGPUResourceSet(
+    SDL_GPUDevice *device,
+    SDL_GPUResourceSet *resource_set)
+{
+    device->ReleaseResourceSet(
+        device->driverData,
+        resource_set);
+}
+
+SDL_GPUResource * SDL_AllocateGPUResource(
+    SDL_GPUDevice *device,
+    SDL_GPUResourceSet *resource_set)
+{
+    return device->AllocateResource(
+        device->driverData,
+        resource_set);
+}
+
+void SDL_ReleaseGPUResource(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource)
+{
+    device->ReleaseResource(
+        device->driverData,
+        resource);
+}
+
+void SDL_SetGPUResourceSampler(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource,
+    SDL_GPUSampler *sampler)
+{
+    device->SetResourceSampler(
+        device->driverData,
+        resource,
+        sampler);
+}
+
+void SDL_SetGPUResourceSampledTexture(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource,
+    SDL_GPUTexture *texture)
+{
+    device->SetResourceSampledTexture(
+        device->driverData,
+        resource,
+        texture);
+}
+
+void SDL_SetGPUResourceStorageTexture(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource,
+    SDL_GPUTexture *texture)
+{
+    device->SetResourceStorageTexture(
+        device->driverData,
+        resource,
+        texture);
+}
+
+void SDL_SetGPUResourceStorageBuffer(
+    SDL_GPUDevice *device,
+    SDL_GPUResource *resource,
+    SDL_GPUBuffer *buffer)
+{
+    device->SetResourceStorageBuffer(
+        device->driverData,
+        resource,
+        buffer);
+}
+
+void SDL_BindGPUResourceSet(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUResourceSet *resource_set,
+    bool cycle)
+{
+    COMMAND_BUFFER_DEVICE->BindResourceSet(command_buffer, resource_set, cycle);
+}
+
+bool SDL_ResolveGPUResource(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUResource *resource,
+    Uint32 *slot)
+{
+    return COMMAND_BUFFER_DEVICE->ResolveResource(command_buffer, resource, slot);
 }

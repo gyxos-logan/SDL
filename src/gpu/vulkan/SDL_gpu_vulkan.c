@@ -13378,6 +13378,8 @@ static XrResult VULKAN_CreateXRSession(
 
 typedef struct VulkanResourceSetContainer VulkanResourceSetContainer;
 typedef struct VulkanResourceSet VulkanResourceSet;
+typedef struct VulkanResourceContainer VulkanResourceContainer;
+typedef struct VulkanResource VulkanResource;
 
 struct VulkanResourceSet
 {
@@ -13424,6 +13426,27 @@ struct VulkanResourceSetContainer
     char *debugName;
     // bool canBeCycled;
     // bool externallyManaged; // true for XR swapchain images
+};
+
+struct VulkanResourceContainer
+{
+    VkDescriptorType type;
+
+    void* backingContainer;
+    VulkanResource *activeResource;
+    Uint32 activeSlot;
+
+    Uint32 resourceCapacity;
+    Uint32 resourceCount;
+    VulkanResource **resources;
+};
+
+struct VulkanResource
+{
+    VulkanResourceContainer *container;
+
+    void* backing;
+    Uint32 slot;
 };
 
 static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
@@ -13562,7 +13585,132 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     return (SDL_GPUResourceSet *)container;
 }
 
+static void VULKAN_INTERNAL_ReleaseResourceSet(
+    VulkanRenderer *renderer,
+    VulkanResourceSet *vulkanResourceSet)
+{
+    // TODO: Implement
+    // if (vulkanResourceSet->markedForDestroy) {
+    //     return;
+    // }
 
+    // SDL_LockMutex(renderer->disposeLock);
+
+    // EXPAND_ARRAY_IF_NEEDED(
+    //     renderer->resourceSetToDestroy,
+    //     VulkanResourceSet *,
+    //     renderer->resourceSetToDestroyCount + 1,
+    //     renderer->resourceSetToDestroyCapacity,
+    //     renderer->resourceSetToDestroyCapacity * 2);
+
+    // renderer->resourceSetToDestroy[renderer->resourceSetToDestroyCount] = vulkanResourceSet;
+    // renderer->resourceSetToDestroyCount += 1;
+
+    // vulkanResourceSet->markedForDestroy = true;
+
+    // SDL_UnlockMutex(renderer->disposeLock);
+}
+
+static void VULKAN_ReleaseResourceSet(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resourceSet)
+{
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+    VulkanResourceSetContainer *vulkanResourceSetContainer = (VulkanResourceSetContainer *)resourceSet;
+    Uint32 i;
+
+    SDL_LockMutex(renderer->disposeLock);
+
+    for (i = 0; i < vulkanResourceSetContainer->resourceSetCount; i += 1) {
+        VULKAN_INTERNAL_ReleaseResourceSet(renderer, vulkanResourceSetContainer->resourceSets[i]);
+    }
+
+    SDL_DestroyProperties(vulkanResourceSetContainer->info.props);
+
+    // Containers are just client handles, so we can destroy immediately
+    SDL_free(vulkanResourceSetContainer->debugName);
+    SDL_free(vulkanResourceSetContainer->resourceSets);
+    SDL_free(vulkanResourceSetContainer);
+
+    SDL_UnlockMutex(renderer->disposeLock);
+}
+
+static SDL_GPUResource * VULKAN_AllocateResource(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resourceSet)
+{
+    VulkanResource *resource;
+    resource = SDL_calloc(1, sizeof(VulkanResourceContainer));
+    
+    return (SDL_GPUResource *)resource;
+}
+
+static void VULKAN_ReleaseResource(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResource *resource)
+{
+
+}
+
+static void VULKAN_SetResourceSampler(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResource *resource,
+    SDL_GPUSampler *sampler)
+{
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
+
+    container->type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    container->backingContainer = sampler;
+}
+
+static void VULKAN_SetResourceSampledTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResource *resource,
+    SDL_GPUTexture *texture)
+{
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
+
+    container->type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    container->backingContainer = texture;
+}
+
+static void VULKAN_SetResourceStorageTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResource *resource,
+    SDL_GPUTexture *texture)
+{
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
+
+    container->type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    container->backingContainer = texture;
+}
+
+static void VULKAN_SetResourceStorageBuffer(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResource *resource,
+    SDL_GPUBuffer *buffer)
+{
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
+
+    container->type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    container->backingContainer = buffer;
+}
+
+static void VULKAN_BindResourceSet(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUResourceSet *resource_set,
+    bool cycle)
+{
+
+}
+
+static bool VULKAN_ResolveResource(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUResource *resource,
+    Uint32 *slot)
+{
+    return true;
+}
 
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
 {
