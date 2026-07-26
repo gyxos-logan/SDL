@@ -13574,6 +13574,37 @@ static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
     return resourceSet;
 }
 
+static void VULKAN_INTERNAL_CopyResourceSetToResourceSet(
+    VulkanRenderer *renderer,
+    VulkanResourceSet *source,
+    VulkanResourceSet *destination)
+{
+    VkCopyDescriptorSet copyDescriptorSets[4];
+    Uint32 i;
+
+    VulkanResourceSetContainer *container = source->container;
+
+    for (i = 0; i < 4; i += 1) {
+        copyDescriptorSets[i].sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+        copyDescriptorSets[i].pNext = NULL;
+        copyDescriptorSets[i].srcSet = source->descriptorSets[i];
+        copyDescriptorSets[i].srcBinding = 0;
+        copyDescriptorSets[i].srcArrayElement = 0;
+        copyDescriptorSets[i].dstSet = destination->descriptorSets[i];
+        copyDescriptorSets[i].dstBinding = 0;
+        copyDescriptorSets[i].dstArrayElement = 0;
+        copyDescriptorSets[i].descriptorCount = i == 0 ? container->numSamplers : container->numResources;
+    }
+
+    renderer->vkUpdateDescriptorSets(
+        renderer->logicalDevice,
+        1,
+        NULL,
+        4,
+        copyDescriptorSets);
+
+}
+
 static void VULKAN_INTERNAL_CycleActiveResourceSet(
     VulkanRenderer *renderer,
     VulkanResourceSetContainer *container)
@@ -13584,6 +13615,7 @@ static void VULKAN_INTERNAL_CycleActiveResourceSet(
     for (Uint32 i = 0; i < container->resourceSetCount; i += 1) {
         resourceSet = container->resourceSets[i];
         if (SDL_GetAtomicInt(&resourceSet->referenceCount) == 0) {
+            VULKAN_INTERNAL_CopyResourceSetToResourceSet(renderer, container->activeResourceSet, resourceSet);
             container->activeResourceSet = resourceSet;
             return;
         }
@@ -13610,6 +13642,7 @@ static void VULKAN_INTERNAL_CycleActiveResourceSet(
     resourceSet->containerIndex = container->resourceSetCount;
     container->resourceSetCount += 1;
 
+    VULKAN_INTERNAL_CopyResourceSetToResourceSet(renderer, container->activeResourceSet, resourceSet);
     container->activeResourceSet = resourceSet;
 }
 
