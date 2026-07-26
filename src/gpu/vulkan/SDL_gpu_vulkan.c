@@ -9679,6 +9679,8 @@ static bool VULKAN_INTERNAL_AllocateCommandBuffer(
 
     commandBuffer->swapchainRequested = false;
 
+    commandBuffer->resourceSet = NULL;
+
     // Pool it!
 
     vulkanCommandPool->inactiveCommandBuffers[vulkanCommandPool->inactiveCommandBufferCount] = commandBuffer;
@@ -13560,7 +13562,7 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
         return NULL;
     }
 
-    container = SDL_malloc(sizeof(VulkanResourceSetContainer));
+    container = SDL_calloc(1, sizeof(VulkanResourceSetContainer));
 
     // Copy properties so we don't lose information when the client destroys them
     container->info = *createinfo;
