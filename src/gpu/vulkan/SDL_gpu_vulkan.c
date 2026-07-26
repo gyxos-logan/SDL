@@ -492,27 +492,7 @@ struct VulkanResourceSet
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSets[4];
 
-    // VulkanMemoryUsedRegion *usedRegion;
-
-    // VkImage image;
-    // VkImageView fullView; // used for samplers and storage reads
-    // VkComponentMapping swizzle;
-    // VkImageAspectFlags aspectFlags;
-    // Uint32 depth; // used for cleanup only
-
-    // // used to avoid indirection on barriers
-    // Uint32 levelCount;
-    // Uint32 layerCount;
-    // SDL_GPUResourceSetType type;
-
-    // // FIXME: It'd be nice if we didn't have to have this on the texture...
-    // SDL_GPUResourceSetUsageFlags usage; // used for defrag transitions only.
-
-    // Uint32 subresourceCount;
-    // VulkanResourceSetSubresource *subresources;
-
-    // bool markedForDestroy; // so that defrag doesn't double-free
-    // bool externallyManaged; // true for XR swapchain images
+    bool markedForDestroy; // so that defrag doesn't double-free
     SDL_AtomicInt referenceCount;
 };
 
@@ -1297,6 +1277,10 @@ struct VulkanRenderer
     VulkanFramebuffer **framebuffersToDestroy;
     Uint32 framebuffersToDestroyCount;
     Uint32 framebuffersToDestroyCapacity;
+
+    VulkanResourceSet **resourceSetsToDestroy;
+    Uint32 resourceSetsToDestroyCount;
+    Uint32 resourceSetsToDestroyCapacity;
 
     SDL_Mutex *allocatorLock;
     SDL_Mutex *disposeLock;
@@ -3129,6 +3113,40 @@ static void VULKAN_INTERNAL_DestroyFramebuffer(
         NULL);
 
     SDL_free(framebuffer);
+}
+
+static void VULKAN_INTERNAL_ReleaseResourceSet(
+    VulkanRenderer *renderer,
+    VulkanResourceSet *vulkanResourceSet)
+{
+    if (vulkanResourceSet->markedForDestroy) {
+        return;
+    }
+
+    SDL_LockMutex(renderer->disposeLock);
+
+    EXPAND_ARRAY_IF_NEEDED(
+        renderer->resourceSetsToDestroy,
+        VulkanResourceSet *,
+        renderer->resourceSetsToDestroyCount + 1,
+        renderer->resourceSetsToDestroyCapacity,
+        renderer->resourceSetsToDestroyCapacity * 2);
+
+    renderer->resourceSetsToDestroy[renderer->resourceSetsToDestroyCount] = vulkanResourceSet;
+    renderer->resourceSetsToDestroyCount += 1;
+
+    vulkanResourceSet->markedForDestroy = true;
+
+    SDL_UnlockMutex(renderer->disposeLock);
+}
+
+static void VULKAN_INTERNAL_DestroyResourceSet(
+    VulkanRenderer *renderer,
+    VulkanResourceSet *resourceSet)
+{
+    renderer->vkDestroyDescriptorPool(renderer->logicalDevice, resourceSet->descriptorPool, NULL);
+
+    SDL_free(resourceSet);
 }
 
 typedef struct CheckOneFramebufferForRemovalData
@@ -5165,6 +5183,7 @@ static void VULKAN_DestroyDevice(
     SDL_free(renderer->shadersToDestroy);
     SDL_free(renderer->samplersToDestroy);
     SDL_free(renderer->framebuffersToDestroy);
+    SDL_free(renderer->resourceSetsToDestroy);
     SDL_free(renderer->allocationsToDefrag);
 
     SDL_DestroyMutex(renderer->allocatorLock);
@@ -10716,6 +10735,17 @@ static void VULKAN_INTERNAL_PerformPendingDestroys(
         }
     }
 
+    for (Sint32 i = renderer->resourceSetsToDestroyCount - 1; i >= 0; i -= 1) {
+        if (SDL_GetAtomicInt(&renderer->resourceSetsToDestroy[i]->referenceCount) == 0) {
+            VULKAN_INTERNAL_DestroyResourceSet(
+                renderer,
+                renderer->resourceSetsToDestroy[i]);
+
+            renderer->resourceSetsToDestroy[i] = renderer->resourceSetsToDestroy[renderer->resourceSetsToDestroyCount - 1];
+            renderer->resourceSetsToDestroyCount -= 1;
+        }
+    }
+
     SDL_UnlockMutex(renderer->disposeLock);
 }
 
@@ -13475,6 +13505,9 @@ struct VulkanResourceSetContainer
     Uint32 numSamplers; // TODO: Should this be atomic?
     Uint32 numResources; // TODO: Should this be atomic?
 
+    VulkanResourceContainer *resources;
+    SDL_AtomicU32 resourceCount;
+
     char *debugName;
     // bool canBeCycled;
     // bool externallyManaged; // true for XR swapchain images
@@ -13675,9 +13708,9 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     container->activeResourceSet = resourceSet;
     container->resourceSetCapacity = 1;
     container->resourceSetCount = 1;
-    container->resourceSets = SDL_malloc(
-        container->resourceSetCapacity * sizeof(VulkanResourceSet *));
+    container->resourceSets = SDL_malloc(container->resourceSetCapacity * sizeof(VulkanResourceSet *));
     container->resourceSets[0] = container->activeResourceSet;
+    container->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResourceContainer));
     container->debugName = NULL;
 
     if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING)) {
@@ -13688,32 +13721,6 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     resourceSet->containerIndex = 0;
 
     return (SDL_GPUResourceSet *)container;
-}
-
-static void VULKAN_INTERNAL_ReleaseResourceSet(
-    VulkanRenderer *renderer,
-    VulkanResourceSet *vulkanResourceSet)
-{
-    // TODO: Implement
-    // if (vulkanResourceSet->markedForDestroy) {
-    //     return;
-    // }
-
-    // SDL_LockMutex(renderer->disposeLock);
-
-    // EXPAND_ARRAY_IF_NEEDED(
-    //     renderer->resourceSetToDestroy,
-    //     VulkanResourceSet *,
-    //     renderer->resourceSetToDestroyCount + 1,
-    //     renderer->resourceSetToDestroyCapacity,
-    //     renderer->resourceSetToDestroyCapacity * 2);
-
-    // renderer->resourceSetToDestroy[renderer->resourceSetToDestroyCount] = vulkanResourceSet;
-    // renderer->resourceSetToDestroyCount += 1;
-
-    // vulkanResourceSet->markedForDestroy = true;
-
-    // SDL_UnlockMutex(renderer->disposeLock);
 }
 
 static void VULKAN_ReleaseResourceSet(
@@ -13730,11 +13737,18 @@ static void VULKAN_ReleaseResourceSet(
         VULKAN_INTERNAL_ReleaseResourceSet(renderer, vulkanResourceSetContainer->resourceSets[i]);
     }
 
+    Uint32 resourceCount = SDL_GetAtomicU32(&vulkanResourceSetContainer->resourceCount);
+
+    for (i = 0; i < resourceCount; i += 1) {
+        SDL_free(vulkanResourceSetContainer->resources[i].resources);
+    }
+
     SDL_DestroyProperties(vulkanResourceSetContainer->info.props);
 
     // Containers are just client handles, so we can destroy immediately
     SDL_free(vulkanResourceSetContainer->debugName);
     SDL_free(vulkanResourceSetContainer->resourceSets);
+    SDL_free(vulkanResourceSetContainer->resources);
     SDL_free(vulkanResourceSetContainer);
 
     SDL_UnlockMutex(renderer->disposeLock);
@@ -13744,24 +13758,14 @@ static SDL_GPUResource * VULKAN_AllocateResource(
     SDL_GPURenderer *driverData,
     SDL_GPUResourceSet *resourceSet)
 {
-    VulkanResourceContainer *container;
-    container = SDL_calloc(1, sizeof(VulkanResourceContainer));
+    VulkanResourceSetContainer *resourceSetContainer = (VulkanResourceSetContainer *)resourceSet;
+    Uint32 slot = SDL_AddAtomicU32(&resourceSetContainer->resourceCount, 1);
+    VulkanResourceContainer *container = &resourceSetContainer->resources[slot];
 
-    // container->canBeCycled = true;
-    // container->activeResource = texture;
     container->resourceCapacity = 1;
     container->resourceCount = 0;
     container->resources = SDL_malloc(
         container->resourceCapacity * sizeof(VulkanResource));
-    // container->resources[0] = container->activeResource;
-    // container->debugName = NULL;
-
-    // if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING)) {
-    //     container->debugName = SDL_strdup(SDL_GetStringProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING, NULL));
-    // }
-
-    // resource->container = container;
-    // resource->containerIndex = 0;
     
     return (SDL_GPUResource *)container;
 }
@@ -13770,7 +13774,13 @@ static void VULKAN_ReleaseResource(
     SDL_GPURenderer *driverData,
     SDL_GPUResource *resource)
 {
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
 
+    // TODO: Return used slots
+    // TODO: Return resource index - usage needs to be tracked then?
+
+    SDL_free(container->resources);
+    container->resources = NULL;
 }
 
 static void VULKAN_INTERNAL_SetResource(
@@ -14499,6 +14509,12 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
     renderer->framebuffersToDestroy = SDL_malloc(
         sizeof(VulkanFramebuffer *) *
         renderer->framebuffersToDestroyCapacity);
+
+    renderer->resourceSetsToDestroyCapacity = 16;
+    renderer->resourceSetsToDestroyCount = 0;
+    renderer->resourceSetsToDestroy = SDL_malloc(
+        sizeof(VulkanResourceSet *) *
+        renderer->resourceSetsToDestroyCapacity);
 
     // Defrag state
 
