@@ -13444,8 +13444,8 @@ struct VulkanResourceSetContainer
     Uint32 resourceSetCount;
     VulkanResourceSet **resourceSets;
 
-    Uint32 numSamplers;
-    Uint32 numResources;
+    Uint32 numSamplers; // TODO: Should this be atomic?
+    Uint32 numResources; // TODO: Should this be atomic?
 
     char *debugName;
     // bool canBeCycled;
@@ -13839,6 +13839,92 @@ static bool VULKAN_ResolveResource(
             }
 
             VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, (VulkanTexture *)resourceContainer->activeResource); // TODO this should be a VulkanResource
+            *slot = resourceContainer->activeSlot;
+
+            return true;
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            if (resourceContainer->activeResource == NULL) {
+                VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
+                VulkanTexture *texture = textureContainer->activeTexture;
+                Uint32 newSlot = resourceSetContainer->numResources++;
+
+                resourceContainer->activeResource = (void *)texture; // TODO this should be a VulkanResource
+                resourceContainer->activeSlot = newSlot;
+
+                VkDescriptorImageInfo imageInfo;
+                imageInfo.sampler = VK_NULL_HANDLE;
+                imageInfo.imageView = texture->fullView;
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+                VkWriteDescriptorSet writeDescriptorSet;
+                writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writeDescriptorSet.pNext = NULL;
+                writeDescriptorSet.dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+                writeDescriptorSet.dstBinding = 0;
+                writeDescriptorSet.dstArrayElement = newSlot;
+                writeDescriptorSet.descriptorCount = 1;
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writeDescriptorSet.pImageInfo = &imageInfo;
+                writeDescriptorSet.pBufferInfo = NULL;
+                writeDescriptorSet.pTexelBufferView = NULL;
+
+                renderer->vkUpdateDescriptorSets(
+                    renderer->logicalDevice,
+                    1,
+                    &writeDescriptorSet,
+                    0,
+                    NULL);
+
+                VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, texture);
+                *slot = newSlot;
+
+                return true;
+            }
+
+            VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, (VulkanTexture *)resourceContainer->activeResource); // TODO this should be a VulkanResource
+            *slot = resourceContainer->activeSlot;
+
+            return true;
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            if (resourceContainer->activeResource == NULL) {
+                VulkanBufferContainer *bufferContainer = (VulkanBufferContainer *)resourceContainer->backingContainer;
+                VulkanBuffer *buffer = bufferContainer->activeBuffer;
+                Uint32 newSlot = resourceSetContainer->numResources++;
+
+                resourceContainer->activeResource = (void *)buffer; // TODO this should be a VulkanResource
+                resourceContainer->activeSlot = newSlot;
+
+                VkDescriptorBufferInfo bufferInfo;
+                bufferInfo.buffer = buffer->buffer;
+                bufferInfo.offset = 0;
+                bufferInfo.range = VK_WHOLE_SIZE;
+
+                VkWriteDescriptorSet writeDescriptorSet;
+                writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writeDescriptorSet.pNext = NULL;
+                writeDescriptorSet.dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+                writeDescriptorSet.dstBinding = 0;
+                writeDescriptorSet.dstArrayElement = newSlot;
+                writeDescriptorSet.descriptorCount = 1;
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writeDescriptorSet.pImageInfo = NULL;
+                writeDescriptorSet.pBufferInfo = &bufferInfo;
+                writeDescriptorSet.pTexelBufferView = NULL;
+
+                renderer->vkUpdateDescriptorSets(
+                    renderer->logicalDevice,
+                    1,
+                    &writeDescriptorSet,
+                    0,
+                    NULL);
+
+                VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, buffer);
+                *slot = newSlot;
+
+                return true;
+            }
+
+            VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, (VulkanBuffer *)resourceContainer->activeResource); // TODO this should be a VulkanResource
             *slot = resourceContainer->activeSlot;
 
             return true;
