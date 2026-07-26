@@ -13876,13 +13876,42 @@ static void VULKAN_INTERNAL_AssignResource(
     VulkanRenderer *renderer,
     VulkanResourceContainer *container,
     VkDescriptorType descriptorType,
-    Uint32 slot,
+    Uint32 *numSlots,
     void* backing,
     VkDescriptorSet dstSet,
     VkDescriptorImageInfo *imageInfo,
     VkDescriptorBufferInfo *bufferInfo)
 {
-    VulkanResource *activeResource = &container->resources[0];
+    VulkanResource *activeResource;
+    Uint32 i, slot;
+    Sint32 emptySlot = -1;
+
+    for (i = 0; i < container->resourceCount; i+= 1) {
+        if (container->resources[i].backing == backing) {
+            container->activeResource = &container->resources[i];
+            return;
+        }
+
+        if (emptySlot == -1 && container->resources[i].backing == NULL) {
+            emptySlot = i;
+        }
+    }
+
+    if (emptySlot == -1) {
+        EXPAND_ARRAY_IF_NEEDED(
+            container->resources,
+            VulkanResource,
+            container->resourceCount + 1,
+            container->resourceCapacity,
+            container->resourceCapacity * 2);
+
+        activeResource = &container->resources[container->resourceCount++];
+    } else {
+        activeResource = &container->resources[emptySlot];
+    }
+    
+    slot = (*numSlots)++;
+
     activeResource->backing = backing;
     activeResource->slot = slot;
     container->activeResource = activeResource;
@@ -13923,9 +13952,10 @@ static bool VULKAN_ResolveResource(
     // VulkanResourceSetContainer *container = vulkanResource->container;
 
     switch (resourceContainer->type) {
-        case VK_DESCRIPTOR_TYPE_SAMPLER:
-            if (resourceContainer->activeResource == NULL) {
-                VulkanSampler *sampler = (VulkanSampler *)resourceContainer->backingContainer;
+        case VK_DESCRIPTOR_TYPE_SAMPLER: {
+            VulkanSampler *sampler = (VulkanSampler *)resourceContainer->backingContainer;
+
+            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != sampler) {
                 VkDescriptorImageInfo imageInfo;
                 imageInfo.sampler = sampler->sampler;
                 imageInfo.imageView = VK_NULL_HANDLE;
@@ -13935,22 +13965,27 @@ static bool VULKAN_ResolveResource(
                     renderer,
                     resourceContainer,
                     VK_DESCRIPTOR_TYPE_SAMPLER,
-                    resourceSetContainer->numSamplers++,
+                    &resourceSetContainer->numSamplers,
                     sampler,
                     resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLER],
                     &imageInfo,
                     NULL);
+            }
+
+            if (resourceContainer->activeResource == NULL) {
+                return false;
             }
             
             VULKAN_INTERNAL_TrackSampler(vulkanCommandBuffer, resourceContainer->activeResource->backing);
             *slot = resourceContainer->activeResource->slot;
 
             return true;
-        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-            if (resourceContainer->activeResource == NULL) {
-                VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
-                VulkanTexture *texture = textureContainer->activeTexture;
+        }
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: {
+            VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
+            VulkanTexture *texture = textureContainer->activeTexture;
 
+            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != texture) {
                 VkDescriptorImageInfo imageInfo;
                 imageInfo.sampler = VK_NULL_HANDLE;
                 imageInfo.imageView = texture->fullView;
@@ -13960,22 +13995,27 @@ static bool VULKAN_ResolveResource(
                     renderer,
                     resourceContainer,
                     VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                    resourceSetContainer->numResources++,
+                    &resourceSetContainer->numResources,
                     texture,
                     resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLED_TEXTURE],
                     &imageInfo,
                     NULL);
             }
 
+            if (resourceContainer->activeResource == NULL) {
+                return false;
+            }
+
             VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, resourceContainer->activeResource->backing);
             *slot = resourceContainer->activeResource->slot;
 
             return true;
-        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-            if (resourceContainer->activeResource == NULL) {
-                VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
-                VulkanTexture *texture = textureContainer->activeTexture;
+        }
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
+            VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
+            VulkanTexture *texture = textureContainer->activeTexture;
 
+            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != texture) {
                 VkDescriptorImageInfo imageInfo;
                 imageInfo.sampler = VK_NULL_HANDLE;
                 imageInfo.imageView = texture->fullView;
@@ -13985,22 +14025,27 @@ static bool VULKAN_ResolveResource(
                     renderer,
                     resourceContainer,
                     VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                    resourceSetContainer->numResources++,
+                    &resourceSetContainer->numResources,
                     texture,
                     resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE],
                     &imageInfo,
                     NULL);
             }
 
+            if (resourceContainer->activeResource == NULL) {
+                return false;
+            }
+
             VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, resourceContainer->activeResource->backing);
             *slot = resourceContainer->activeResource->slot;
 
             return true;
-        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-            if (resourceContainer->activeResource == NULL) {
-                VulkanBufferContainer *bufferContainer = (VulkanBufferContainer *)resourceContainer->backingContainer;
-                VulkanBuffer *buffer = bufferContainer->activeBuffer;
+        }
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: {
+            VulkanBufferContainer *bufferContainer = (VulkanBufferContainer *)resourceContainer->backingContainer;
+            VulkanBuffer *buffer = bufferContainer->activeBuffer;
 
+            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != buffer) {
                 VkDescriptorBufferInfo bufferInfo;
                 bufferInfo.buffer = buffer->buffer;
                 bufferInfo.offset = 0;
@@ -14010,17 +14055,22 @@ static bool VULKAN_ResolveResource(
                     renderer,
                     resourceContainer,
                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                    resourceSetContainer->numResources++,
+                    &resourceSetContainer->numResources,
                     buffer,
                     resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_BUFFER],
                     NULL,
                     &bufferInfo);
             }
 
+            if (resourceContainer->activeResource == NULL) {
+                return false;
+            }
+
             VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, resourceContainer->activeResource->backing);
             *slot = resourceContainer->activeResource->slot;
 
             return true;
+        }
         default:
             SDL_SetError("Vulkan container type unsupported %d", resourceContainer->type);
             return false;
