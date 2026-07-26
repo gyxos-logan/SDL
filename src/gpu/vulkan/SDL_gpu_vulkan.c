@@ -13687,25 +13687,6 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
     resourceSet->container = container;
     resourceSet->containerIndex = 0;
 
-    // Let's transition to the default barrier state, because for some reason Vulkan doesn't let us do that with initialLayout.
-    // Only do this after "container" is set, so the resourceSet
-    // is fully initialized before any Submit that could trigger defrag.
-    // {
-    //     VulkanCommandBuffer *barrierCommandBuffer = (VulkanCommandBuffer *)VULKAN_AcquireCommandBuffer((SDL_GPURenderer *)renderer);
-    //     VULKAN_INTERNAL_ResourceSetTransitionToDefaultUsage(
-    //         renderer,
-    //         barrierCommandBuffer,
-    //         VULKAN_TEXTURE_USAGE_MODE_UNINITIALIZED,
-    //         resourceSet);
-
-    //     VULKAN_INTERNAL_TrackResourceSet(barrierCommandBuffer, resourceSet);
-
-    //     if (!VULKAN_Submit((SDL_GPUCommandBuffer *)barrierCommandBuffer)) {
-    //         VULKAN_ReleaseResourceSet((SDL_GPURenderer *)renderer, (SDL_GPUResourceSet *)container);
-    //         return NULL;
-    //     }
-    // }
-
     return (SDL_GPUResourceSet *)container;
 }
 
