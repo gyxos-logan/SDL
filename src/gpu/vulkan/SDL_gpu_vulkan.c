@@ -482,6 +482,7 @@ typedef struct VulkanTextureContainer VulkanTextureContainer;
 typedef struct VulkanResourceSet VulkanResourceSet;
 typedef struct VulkanResourceContainer VulkanResourceContainer;
 typedef struct VulkanResource VulkanResource;
+typedef struct VulkanResourceSlot VulkanResourceSlot;
 
 struct VulkanResourceSet
 {
@@ -493,7 +494,7 @@ struct VulkanResourceSet
     VulkanResourceContainer *resources;
     SDL_AtomicU32 resourceCount;
 
-    SDL_AtomicU32* slotReferenceCounts;
+    SDL_AtomicInt* slotReferenceCounts;
     Uint32* freeSlots;
 
     char *debugName;
@@ -503,6 +504,12 @@ struct VulkanResourceSet
 
     bool markedForDestroy; // so that defrag doesn't double-free
     SDL_AtomicInt referenceCount;
+};
+
+struct VulkanResourceSlot
+{
+    VulkanResourceSet *resourceSet;
+    Uint32 slot;
 };
 
 typedef struct VulkanFenceHandle
@@ -1155,6 +1162,10 @@ typedef struct VulkanCommandBuffer
     VulkanResourceSet **usedResourceSets;
     Sint32 usedResourceSetCount;
     Sint32 usedResourceSetCapacity;
+
+    VulkanResourceSlot *usedResourceSlots;
+    Sint32 usedResourceSlotCount;
+    Sint32 usedResourceSlotCapacity;
 } VulkanCommandBuffer;
 
 struct VulkanCommandPool
@@ -2650,6 +2661,29 @@ static void VULKAN_INTERNAL_TrackResourceSet(
         resourceSet->referenceCount);
 }
 
+static void VULKAN_INTERNAL_TrackResourceSlot(
+    VulkanCommandBuffer *commandBuffer,
+    VulkanResourceSet *resourceSet,
+    Uint32 slot)
+{
+    VulkanResourceSlot resourceSlot;
+    resourceSlot.resourceSet = resourceSet;
+    resourceSlot.slot = slot;
+
+    for (Sint32 i = commandBuffer->usedResourceSlotCount - 1; i >= 0; i -= 1) {
+        if (commandBuffer->usedResourceSlots[i].resourceSet == resourceSet && commandBuffer->usedResourceSlots[i].slot == slot) {
+            return;
+        }
+    }
+    if (commandBuffer->usedResourceSlotCount == commandBuffer->usedResourceSlotCapacity) {
+        commandBuffer->usedResourceSlotCapacity += 1;
+        commandBuffer->usedResourceSlots = SDL_realloc_REAL(commandBuffer->usedResourceSlots, commandBuffer->usedResourceSlotCapacity * sizeof(VulkanResourceSlot *));
+    }
+    commandBuffer->usedResourceSlots[commandBuffer->usedResourceSlotCount] = resourceSlot;
+    commandBuffer->usedResourceSlotCount += 1;
+    SDL_AddAtomicInt_REAL(&resourceSet->slotReferenceCounts[slot], 1);
+}
+
 #undef TRACK_RESOURCE
 
 // Memory Barriers
@@ -3313,6 +3347,7 @@ static void VULKAN_INTERNAL_DestroyCommandPool(
         SDL_free(commandBuffer->usedFramebuffers);
         SDL_free(commandBuffer->usedUniformBuffers);
         SDL_free(commandBuffer->usedResourceSets);
+        SDL_free(commandBuffer->usedResourceSlots);
 
         SDL_free(commandBuffer);
     }
@@ -9701,7 +9736,12 @@ static bool VULKAN_INTERNAL_AllocateCommandBuffer(
     commandBuffer->usedResourceSetCapacity = 4;
     commandBuffer->usedResourceSetCount = 0;
     commandBuffer->usedResourceSets = SDL_malloc(
-        commandBuffer->usedResourceSetCapacity * sizeof(VulkanBuffer *));
+        commandBuffer->usedResourceSetCapacity * sizeof(VulkanResourceSet *));
+
+    commandBuffer->usedResourceSlotCapacity = 4;
+    commandBuffer->usedResourceSlotCount = 0;
+    commandBuffer->usedResourceSlots = SDL_malloc(
+        commandBuffer->usedResourceSlotCapacity * sizeof(VulkanResourceSlot));
 
     commandBuffer->swapchainRequested = false;
 
@@ -10805,6 +10845,12 @@ static void VULKAN_INTERNAL_CleanCommandBuffer(
         (void)SDL_AtomicDecRef(&commandBuffer->usedResourceSets[i]->referenceCount);
     }
     commandBuffer->usedResourceSetCount = 0;
+
+    for (Sint32 i = 0; i < commandBuffer->usedResourceSlotCount; i += 1) {
+        VulkanResourceSlot *resourceSlot = &commandBuffer->usedResourceSlots[i];
+        (void)SDL_AtomicDecRef(&resourceSlot->resourceSet->slotReferenceCounts[resourceSlot->slot]);
+    }
+    commandBuffer->usedResourceSlotCount = 0;
 
     // Reset presentation data
 
@@ -13588,7 +13634,9 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
         renderer,
         resourceSet);
 
-    resourceSet->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResourceContainer));
+    Uint32 total = createinfo->num_samplers + createinfo->num_resources;
+    resourceSet->resources = SDL_malloc(total * sizeof(VulkanResourceContainer));
+    resourceSet->slotReferenceCounts = SDL_calloc(total, sizeof(SDL_AtomicInt));
     resourceSet->debugName = NULL;
 
     if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING)) {
@@ -13859,9 +13907,9 @@ static bool VULKAN_ResolveResource(
         return false;
     }
 
-    *slot = resourceContainer->activeResource->slot;
-
-    // VULKAN_INTERNAL_TrackResourceSlot(vulkanCommandBuffer, resourceSet, *slot);
+    Uint32 activeSlot = resourceContainer->activeResource->slot;
+    *slot = activeSlot;
+    VULKAN_INTERNAL_TrackResourceSlot(vulkanCommandBuffer, resourceSet, activeSlot);
 
     switch (resourceContainer->type) {
         case VK_DESCRIPTOR_TYPE_SAMPLER:
