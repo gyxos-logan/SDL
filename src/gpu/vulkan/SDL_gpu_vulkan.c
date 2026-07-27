@@ -13517,8 +13517,6 @@ static bool VULKAN_INTERNAL_CreateResourceSetDescriptors(
         return false;
     }
 
-    resourceSet = SDL_calloc(1, sizeof(VulkanResourceSet));
-
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
     poolSizes[0].descriptorCount = createinfo->num_samplers;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -13590,7 +13588,7 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
         renderer,
         resourceSet);
 
-    resourceSet->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResource));
+    resourceSet->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResourceContainer));
     resourceSet->debugName = NULL;
 
     if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING)) {
@@ -13653,8 +13651,6 @@ static void VULKAN_ReleaseResourceSet(
     SDL_free(vulkanResourceSet->debugName);
     SDL_free(vulkanResourceSet->resources);
     SDL_free(vulkanResourceSet);
-
-    SDL_UnlockMutex(renderer->disposeLock);
 }
 
 static bool VULKAN_INTERNAL_EnsureResourceSlot(
@@ -13729,7 +13725,7 @@ static bool VULKAN_INTERNAL_EnsureResourceSlot(
             slot = SDL_AddAtomicU32(&resourceSet->numResources, 1);
             break;
         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_BUFFER];
             bufferInfo.buffer = ((VulkanBuffer *)backing)->buffer;
             bufferInfo.offset = 0;
             bufferInfo.range = VK_WHOLE_SIZE;
