@@ -1129,47 +1129,42 @@ struct SDL_GPUDevice
         SDL_GPURenderer *renderer,
         const SDL_GPUResourceSetCreateInfo *createinfo);
 
+    void (*BindResourceSet)(
+        SDL_GPUCommandBuffer *command_buffer,
+        SDL_GPUResourceSet *resource_set);
+
     void (*ReleaseResourceSet)(
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource);
 
-    SDL_GPUResource *(*AllocateResource)(
+    SDL_GPUResourceHandle *(*AllocateResourceSampler)(
         SDL_GPURenderer *renderer,
-        SDL_GPUResourceSet *resource_set);
-
-    void (*ReleaseResource)(
-        SDL_GPURenderer *renderer,
-        SDL_GPUResource *resource);
-
-    void (*SetResourceSampler)(
-        SDL_GPURenderer *renderer,
-        SDL_GPUResource *resource,
+        SDL_GPUResourceSet *resource_set,
         SDL_GPUSampler *texture);
 
-    void (*SetResourceSampledTexture)(
+    SDL_GPUResourceHandle *(*AllocateResourceSampledTexture)(
         SDL_GPURenderer *renderer,
-        SDL_GPUResource *resource,
-        SDL_GPUTexture *texture);
-
-    void (*SetResourceStorageTexture)(
-        SDL_GPURenderer *renderer,
-        SDL_GPUResource *resource,
-        SDL_GPUTexture *texture);
-
-    void (*SetResourceStorageBuffer)(
-        SDL_GPURenderer *renderer,
-        SDL_GPUResource *resource,
-        SDL_GPUBuffer *buffer);
-
-    void (*BindResourceSet)(
-        SDL_GPUCommandBuffer *command_buffer,
         SDL_GPUResourceSet *resource_set,
-        bool cycle);
+        SDL_GPUTexture *texture);
+
+    SDL_GPUResourceHandle *(*AllocateResourceStorageTexture)(
+        SDL_GPURenderer *renderer,
+        SDL_GPUResourceSet *resource_set,
+        SDL_GPUTexture *texture);
+
+    SDL_GPUResourceHandle *(*AllocateResourceStorageBuffer)(
+        SDL_GPURenderer *renderer,
+        SDL_GPUResourceSet *resource_set,
+        SDL_GPUBuffer *buffer);
 
     bool (*ResolveResource)(
         SDL_GPUCommandBuffer *command_buffer,
-        SDL_GPUResource *resource,
+        SDL_GPUResourceHandle *resource,
         Uint32 *slot);
+
+    void (*ReleaseResource)(
+        SDL_GPURenderer *renderer,
+        SDL_GPUResourceHandle *resource);
 };
 
 #define ASSIGN_DRIVER_FUNC(func, name) \
@@ -1263,15 +1258,14 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(SupportsTextureFormat, name)         \
     ASSIGN_DRIVER_FUNC(SupportsSampleCount, name)           \
     ASSIGN_DRIVER_FUNC(CreateResourceSet, name)             \
-    ASSIGN_DRIVER_FUNC(ReleaseResourceSet, name)            \
-    ASSIGN_DRIVER_FUNC(AllocateResource, name)              \
-    ASSIGN_DRIVER_FUNC(ReleaseResource, name)               \
-    ASSIGN_DRIVER_FUNC(SetResourceSampler, name)            \
-    ASSIGN_DRIVER_FUNC(SetResourceSampledTexture, name)     \
-    ASSIGN_DRIVER_FUNC(SetResourceStorageTexture, name)     \
-    ASSIGN_DRIVER_FUNC(SetResourceStorageBuffer, name)      \
     ASSIGN_DRIVER_FUNC(BindResourceSet, name)               \
-    ASSIGN_DRIVER_FUNC(ResolveResource, name)
+    ASSIGN_DRIVER_FUNC(ReleaseResourceSet, name)            \
+    ASSIGN_DRIVER_FUNC(AllocateResourceSampler, name)       \
+    ASSIGN_DRIVER_FUNC(AllocateResourceSampledTexture, name)\
+    ASSIGN_DRIVER_FUNC(AllocateResourceStorageTexture, name)\
+    ASSIGN_DRIVER_FUNC(AllocateResourceStorageBuffer, name) \
+    ASSIGN_DRIVER_FUNC(ResolveResource, name)               \
+    ASSIGN_DRIVER_FUNC(ReleaseResource, name)
 
 typedef struct SDL_GPUBootstrap
 {

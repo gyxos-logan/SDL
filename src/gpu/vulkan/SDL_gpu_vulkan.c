@@ -479,15 +479,24 @@ typedef struct VulkanUniformBuffer VulkanUniformBuffer;
 typedef struct VulkanTexture VulkanTexture;
 typedef struct VulkanTextureContainer VulkanTextureContainer;
 
-typedef struct VulkanResourceSetContainer VulkanResourceSetContainer;
 typedef struct VulkanResourceSet VulkanResourceSet;
 typedef struct VulkanResourceContainer VulkanResourceContainer;
 typedef struct VulkanResource VulkanResource;
 
 struct VulkanResourceSet
 {
-    VulkanResourceSetContainer *container;
-    Uint32 containerIndex;
+    SDL_GPUResourceSetCreateInfo info;
+
+    SDL_AtomicU32 numSamplers;
+    SDL_AtomicU32 numResources;
+
+    VulkanResourceContainer *resources;
+    SDL_AtomicU32 resourceCount;
+
+    SDL_AtomicU32* slotReferenceCounts;
+    Uint32* freeSlots;
+
+    char *debugName;
 
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSets[4];
@@ -3113,31 +3122,6 @@ static void VULKAN_INTERNAL_DestroyFramebuffer(
         NULL);
 
     SDL_free(framebuffer);
-}
-
-static void VULKAN_INTERNAL_ReleaseResourceSet(
-    VulkanRenderer *renderer,
-    VulkanResourceSet *vulkanResourceSet)
-{
-    if (vulkanResourceSet->markedForDestroy) {
-        return;
-    }
-
-    SDL_LockMutex(renderer->disposeLock);
-
-    EXPAND_ARRAY_IF_NEEDED(
-        renderer->resourceSetsToDestroy,
-        VulkanResourceSet *,
-        renderer->resourceSetsToDestroyCount + 1,
-        renderer->resourceSetsToDestroyCapacity,
-        renderer->resourceSetsToDestroyCapacity * 2);
-
-    renderer->resourceSetsToDestroy[renderer->resourceSetsToDestroyCount] = vulkanResourceSet;
-    renderer->resourceSetsToDestroyCount += 1;
-
-    vulkanResourceSet->markedForDestroy = true;
-
-    SDL_UnlockMutex(renderer->disposeLock);
 }
 
 static void VULKAN_INTERNAL_DestroyResourceSet(
@@ -13492,27 +13476,6 @@ static XrResult VULKAN_CreateXRSession(
 #define RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE 2
 #define RESOURCE_DESCRIPTOR_SET_STORAGE_BUFFER  3
 
-struct VulkanResourceSetContainer
-{
-    SDL_GPUResourceSetCreateInfo info;
-
-    VulkanResourceSet *activeResourceSet;
-
-    Uint32 resourceSetCapacity;
-    Uint32 resourceSetCount;
-    VulkanResourceSet **resourceSets;
-
-    Uint32 numSamplers; // TODO: Should this be atomic?
-    Uint32 numResources; // TODO: Should this be atomic?
-
-    VulkanResourceContainer *resources;
-    SDL_AtomicU32 resourceCount;
-
-    char *debugName;
-    // bool canBeCycled;
-    // bool externallyManaged; // true for XR swapchain images
-};
-
 struct VulkanResourceContainer
 {
     VkDescriptorType type;
@@ -13534,24 +13497,24 @@ struct VulkanResource
     Uint32 slot;
 };
 
-static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
+static bool VULKAN_INTERNAL_CreateResourceSetDescriptors(
     VulkanRenderer *renderer,
-    const SDL_GPUResourceSetCreateInfo *createinfo)
+    VulkanResourceSet *resourceSet)
 {
-    VulkanResourceSet *resourceSet;
     VkDescriptorPoolCreateInfo descriptorPoolInfo;
     VkDescriptorPoolSize poolSizes[4];
     Uint32 descriptorCounts[4];
     VkResult vulkanResult;
+    SDL_GPUResourceSetCreateInfo *createinfo = &resourceSet->info;
 
     if (!renderer->bindlessResources) {
         SDL_SetError("Bindless resources are not enabled for this device");
-        return NULL;
+        return false;
     }
 
-    if (createinfo->num_samplers > 65536 || createinfo->num_resources > 65536) {
-        SDL_SetError("Bindless resources cannot exceed 65536 samplers or resources");
-        return NULL;
+    if (resourceSet->info.num_samplers > 65536 || resourceSet->info.num_resources > 65536) {
+        SDL_SetError("Bindless resources cannot exceed 65536 samplers or resources (TODO detect correct max value)");
+        return false;
     }
 
     resourceSet = SDL_calloc(1, sizeof(VulkanResourceSet));
@@ -13579,7 +13542,7 @@ static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
         &resourceSet->descriptorPool);
 
     // TODO: Cleanup on failure
-    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, NULL);
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, false);
 
     descriptorCounts[0] = createinfo->num_samplers;
     descriptorCounts[1] = createinfo->num_resources;
@@ -13602,81 +13565,9 @@ static VulkanResourceSet *VULKAN_INTERNAL_CreateResourceSet(
     vulkanResult = renderer->vkAllocateDescriptorSets(renderer->logicalDevice, &allocateInfo, resourceSet->descriptorSets);
 
     // TODO: Cleanup on failure
-    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, NULL);
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, false);
 
-    return resourceSet;
-}
-
-static void VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(
-    VulkanRenderer *renderer,
-    VulkanResourceSetContainer *container,
-    VulkanResourceSet *destination)
-{
-    VkCopyDescriptorSet copyDescriptorSets[4];
-    Uint32 i;
-
-    VulkanResourceSet *source = container->activeResourceSet;
-
-    for (i = 0; i < 4; i += 1) {
-        copyDescriptorSets[i].sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
-        copyDescriptorSets[i].pNext = NULL;
-        copyDescriptorSets[i].srcSet = source->descriptorSets[i];
-        copyDescriptorSets[i].srcBinding = 0;
-        copyDescriptorSets[i].srcArrayElement = 0;
-        copyDescriptorSets[i].dstSet = destination->descriptorSets[i];
-        copyDescriptorSets[i].dstBinding = 0;
-        copyDescriptorSets[i].dstArrayElement = 0;
-        copyDescriptorSets[i].descriptorCount = i == 0 ? container->numSamplers : container->numResources;
-    }
-
-    renderer->vkUpdateDescriptorSets(
-        renderer->logicalDevice,
-        1,
-        NULL,
-        4,
-        copyDescriptorSets);
-
-}
-
-static void VULKAN_INTERNAL_CycleActiveResourceSet(
-    VulkanRenderer *renderer,
-    VulkanResourceSetContainer *container)
-{
-    VulkanResourceSet *resourceSet;
-
-    // If a previously-cycled resourceSet is available, we can use that.
-    for (Uint32 i = 0; i < container->resourceSetCount; i += 1) {
-        resourceSet = container->resourceSets[i];
-        if (SDL_GetAtomicInt(&resourceSet->referenceCount) == 0) {
-            VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(renderer, container, resourceSet);
-            container->activeResourceSet = resourceSet;
-            return;
-        }
-    }
-
-    // No resourceSet handle is available, create a new one.
-    resourceSet = VULKAN_INTERNAL_CreateResourceSet(
-        renderer,
-        &container->info);
-
-    if (!resourceSet) {
-        return;
-    }
-
-    EXPAND_ARRAY_IF_NEEDED(
-        container->resourceSets,
-        VulkanResourceSet *,
-        container->resourceSetCount + 1,
-        container->resourceSetCapacity,
-        container->resourceSetCapacity * 2);
-
-    container->resourceSets[container->resourceSetCount] = resourceSet;
-    resourceSet->container = container;
-    resourceSet->containerIndex = container->resourceSetCount;
-    container->resourceSetCount += 1;
-
-    VULKAN_INTERNAL_CopyActiveResourceSetToResourceSet(renderer, container, resourceSet);
-    container->activeResourceSet = resourceSet;
+    return true;
 }
 
 static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
@@ -13685,42 +13576,41 @@ static SDL_GPUResourceSet *VULKAN_CreateResourceSet(
 {
     VulkanRenderer *renderer = (VulkanRenderer *)driverData;
     VulkanResourceSet *resourceSet;
-    VulkanResourceSetContainer *container;
 
-    resourceSet = VULKAN_INTERNAL_CreateResourceSet(
-        renderer,
-        createinfo);
-
-    if (resourceSet == NULL) {
-        return NULL;
-    }
-
-    container = SDL_calloc(1, sizeof(VulkanResourceSetContainer));
+    resourceSet = SDL_calloc(1, sizeof(VulkanResourceSet));
 
     // Copy properties so we don't lose information when the client destroys them
-    container->info = *createinfo;
-    container->info.props = SDL_CreateProperties();
+    resourceSet->info = *createinfo;
+    resourceSet->info.props = SDL_CreateProperties();
     if (createinfo->props) {
-        SDL_CopyProperties(createinfo->props, container->info.props);
+        SDL_CopyProperties(createinfo->props, resourceSet->info.props);
     }
 
-    // container->canBeCycled = true;
-    container->activeResourceSet = resourceSet;
-    container->resourceSetCapacity = 1;
-    container->resourceSetCount = 1;
-    container->resourceSets = SDL_malloc(container->resourceSetCapacity * sizeof(VulkanResourceSet *));
-    container->resourceSets[0] = container->activeResourceSet;
-    container->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResourceContainer));
-    container->debugName = NULL;
+    VULKAN_INTERNAL_CreateResourceSetDescriptors(
+        renderer,
+        resourceSet);
+
+    resourceSet->resources = SDL_malloc((createinfo->num_samplers + createinfo->num_resources) * sizeof(VulkanResource));
+    resourceSet->debugName = NULL;
 
     if (SDL_HasProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING)) {
-        container->debugName = SDL_strdup(SDL_GetStringProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING, NULL));
+        resourceSet->debugName = SDL_strdup(SDL_GetStringProperty(createinfo->props, SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING, NULL));
     }
 
-    resourceSet->container = container;
-    resourceSet->containerIndex = 0;
+    return (SDL_GPUResourceSet *)resourceSet;
+}
 
-    return (SDL_GPUResourceSet *)container;
+static void VULKAN_BindResourceSet(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUResourceSet *resourceSet)
+{
+    VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
+    VulkanResourceSet *container = (VulkanResourceSet *)resourceSet;
+
+
+    VULKAN_INTERNAL_TrackResourceSet(vulkanCommandBuffer, container);
+
+    vulkanCommandBuffer->resourceSet = container;
 }
 
 static void VULKAN_ReleaseResourceSet(
@@ -13728,180 +13618,126 @@ static void VULKAN_ReleaseResourceSet(
     SDL_GPUResourceSet *resourceSet)
 {
     VulkanRenderer *renderer = (VulkanRenderer *)driverData;
-    VulkanResourceSetContainer *vulkanResourceSetContainer = (VulkanResourceSetContainer *)resourceSet;
+    VulkanResourceSet *vulkanResourceSet = (VulkanResourceSet *)resourceSet;
     Uint32 i;
 
     SDL_LockMutex(renderer->disposeLock);
 
-    for (i = 0; i < vulkanResourceSetContainer->resourceSetCount; i += 1) {
-        VULKAN_INTERNAL_ReleaseResourceSet(renderer, vulkanResourceSetContainer->resourceSets[i]);
+    if (vulkanResourceSet->markedForDestroy) {
+        return;
     }
 
-    Uint32 resourceCount = SDL_GetAtomicU32(&vulkanResourceSetContainer->resourceCount);
+    EXPAND_ARRAY_IF_NEEDED(
+        renderer->resourceSetsToDestroy,
+        VulkanResourceSet *,
+        renderer->resourceSetsToDestroyCount + 1,
+        renderer->resourceSetsToDestroyCapacity,
+        renderer->resourceSetsToDestroyCapacity * 2);
+
+    renderer->resourceSetsToDestroy[renderer->resourceSetsToDestroyCount] = vulkanResourceSet;
+    renderer->resourceSetsToDestroyCount += 1;
+
+    vulkanResourceSet->markedForDestroy = true;
+
+    SDL_UnlockMutex(renderer->disposeLock);
+
+    Uint32 resourceCount = SDL_GetAtomicU32(&vulkanResourceSet->resourceCount);
 
     for (i = 0; i < resourceCount; i += 1) {
-        SDL_free(vulkanResourceSetContainer->resources[i].resources);
+        SDL_free(vulkanResourceSet->resources[i].resources);
     }
 
-    SDL_DestroyProperties(vulkanResourceSetContainer->info.props);
+    SDL_DestroyProperties(vulkanResourceSet->info.props);
 
     // Containers are just client handles, so we can destroy immediately
-    SDL_free(vulkanResourceSetContainer->debugName);
-    SDL_free(vulkanResourceSetContainer->resourceSets);
-    SDL_free(vulkanResourceSetContainer->resources);
-    SDL_free(vulkanResourceSetContainer);
+    SDL_free(vulkanResourceSet->debugName);
+    SDL_free(vulkanResourceSet->resources);
+    SDL_free(vulkanResourceSet);
 
     SDL_UnlockMutex(renderer->disposeLock);
 }
 
-static SDL_GPUResource * VULKAN_AllocateResource(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resourceSet)
-{
-    VulkanResourceSetContainer *resourceSetContainer = (VulkanResourceSetContainer *)resourceSet;
-    Uint32 slot = SDL_AddAtomicU32(&resourceSetContainer->resourceCount, 1);
-    VulkanResourceContainer *container = &resourceSetContainer->resources[slot];
-
-    container->resourceCapacity = 1;
-    container->resourceCount = 0;
-    container->resources = SDL_malloc(
-        container->resourceCapacity * sizeof(VulkanResource));
-    
-    return (SDL_GPUResource *)container;
-}
-
-static void VULKAN_ReleaseResource(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResource *resource)
-{
-    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
-
-    // TODO: Return used slots
-    // TODO: Return resource index - usage needs to be tracked then?
-
-    SDL_free(container->resources);
-    container->resources = NULL;
-}
-
-static void VULKAN_INTERNAL_SetResource(
-    SDL_GPUResource *resource,
-    VkDescriptorType type,
-    void* backingContainer)
-{
-    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
-    Uint32 i;
-
-    if (container->resourceCount > 0
-        && ((type == VK_DESCRIPTOR_TYPE_SAMPLER && container->type != VK_DESCRIPTOR_TYPE_SAMPLER) 
-            || (type != VK_DESCRIPTOR_TYPE_SAMPLER && container->type == VK_DESCRIPTOR_TYPE_SAMPLER)
-        )
-    ) {
-        // TODO: we are switching between sampler and general resources - return the used slots
-        container->resourceCount = 0;
-    }
-
-    container->type = type;
-    container->backingContainer = backingContainer;
-
-    for (i = 0; i < container->resourceCount; i += 1) {
-        container->resources[i].backing = NULL;
-    }
-
-    container->activeResource = NULL;
-}
-
-static void VULKAN_SetResourceSampler(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResource *resource,
-    SDL_GPUSampler *sampler)
-{
-    VULKAN_INTERNAL_SetResource(resource, VK_DESCRIPTOR_TYPE_SAMPLER, sampler);
-}
-
-static void VULKAN_SetResourceSampledTexture(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResource *resource,
-    SDL_GPUTexture *texture)
-{
-    VULKAN_INTERNAL_SetResource(resource, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, texture);
-}
-
-static void VULKAN_SetResourceStorageTexture(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResource *resource,
-    SDL_GPUTexture *texture)
-{
-    VULKAN_INTERNAL_SetResource(resource, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, texture);
-}
-
-static void VULKAN_SetResourceStorageBuffer(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResource *resource,
-    SDL_GPUBuffer *buffer)
-{
-    VULKAN_INTERNAL_SetResource(resource, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, buffer);
-}
-
-static void VULKAN_BindResourceSet(
-    SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUResourceSet *resourceSet,
-    bool cycle)
-{
-    VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
-    VulkanResourceSetContainer *container = (VulkanResourceSetContainer *)resourceSet;
-
-    if (
-        cycle &&
-        SDL_GetAtomicInt(&container->activeResourceSet->referenceCount) > 0) {
-        VULKAN_INTERNAL_CycleActiveResourceSet(
-            vulkanCommandBuffer->renderer,
-            container);
-    }
-
-    VULKAN_INTERNAL_TrackResourceSet(vulkanCommandBuffer, container->activeResourceSet);
-
-    vulkanCommandBuffer->resourceSet = container->activeResourceSet;
-}
-
-static void VULKAN_INTERNAL_AssignResource(
+static bool VULKAN_INTERNAL_EnsureResourceSlot(
     VulkanRenderer *renderer,
-    VulkanResourceContainer *container,
-    VkDescriptorType descriptorType,
-    Uint32 *numSlots,
-    void* backing,
-    VkDescriptorSet dstSet,
-    VkDescriptorImageInfo *imageInfo,
-    VkDescriptorBufferInfo *bufferInfo)
+    VulkanResourceSet *resourceSet,
+    VulkanResourceContainer *container)
 {
+    VkDescriptorSet dstSet;
+    VkDescriptorImageInfo imageInfo;
+    VkDescriptorBufferInfo bufferInfo;
     VulkanResource *activeResource;
     Uint32 i, slot;
-    Sint32 emptySlot = -1;
+    void* backing;
+
+    switch (container->type) {
+        case VK_DESCRIPTOR_TYPE_SAMPLER:
+            backing = container->backingContainer;
+            break;
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            backing = ((VulkanTextureContainer *)container->backingContainer)->activeTexture;
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            backing = ((VulkanTextureContainer *)container->backingContainer)->activeTexture;
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            backing = ((VulkanBufferContainer *)container->backingContainer)->activeBuffer;
+            break;
+        default:
+            return false;
+    }
+
+    if (container->activeResource != NULL && container->activeResource->backing == backing) {
+        return true;
+    }
 
     for (i = 0; i < container->resourceCount; i+= 1) {
         if (container->resources[i].backing == backing) {
             container->activeResource = &container->resources[i];
-            return;
-        }
-
-        if (emptySlot == -1 && container->resources[i].backing == NULL) {
-            emptySlot = i;
+            return true;
         }
     }
 
-    if (emptySlot == -1) {
-        EXPAND_ARRAY_IF_NEEDED(
-            container->resources,
-            VulkanResource,
-            container->resourceCount + 1,
-            container->resourceCapacity,
-            container->resourceCapacity * 2);
+    EXPAND_ARRAY_IF_NEEDED(
+        container->resources,
+        VulkanResource,
+        container->resourceCount + 1,
+        container->resourceCapacity,
+        container->resourceCapacity * 2);
 
-        activeResource = &container->resources[container->resourceCount++];
-    } else {
-        activeResource = &container->resources[emptySlot];
+    activeResource = &container->resources[container->resourceCount++];
+
+    switch (container->type) {
+        case VK_DESCRIPTOR_TYPE_SAMPLER:
+            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLER];
+            imageInfo.sampler = ((VulkanSampler *)backing)->sampler;
+            imageInfo.imageView = VK_NULL_HANDLE;
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            slot = SDL_AddAtomicU32(&resourceSet->numSamplers, 1);
+            break;
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLED_TEXTURE];
+            imageInfo.sampler = VK_NULL_HANDLE;
+            imageInfo.imageView = ((VulkanTexture *)backing)->fullView;
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            slot = SDL_AddAtomicU32(&resourceSet->numResources, 1);
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+            imageInfo.sampler = VK_NULL_HANDLE;
+            imageInfo.imageView = ((VulkanTexture *)backing)->fullView;
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            slot = SDL_AddAtomicU32(&resourceSet->numResources, 1);
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            dstSet = resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE];
+            bufferInfo.buffer = ((VulkanBuffer *)backing)->buffer;
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+            slot = SDL_AddAtomicU32(&resourceSet->numResources, 1);
+            break;
+        default:
+            return false;
     }
-    
-    slot = (*numSlots)++;
 
     activeResource->backing = backing;
     activeResource->slot = slot;
@@ -13914,9 +13750,9 @@ static void VULKAN_INTERNAL_AssignResource(
     writeDescriptorSet.dstBinding = 0;
     writeDescriptorSet.dstArrayElement = slot;
     writeDescriptorSet.descriptorCount = 1;
-    writeDescriptorSet.descriptorType = descriptorType;
-    writeDescriptorSet.pImageInfo = imageInfo;
-    writeDescriptorSet.pBufferInfo = bufferInfo;
+    writeDescriptorSet.descriptorType = container->type;
+    writeDescriptorSet.pImageInfo = &imageInfo;
+    writeDescriptorSet.pBufferInfo = &bufferInfo;
     writeDescriptorSet.pTexelBufferView = NULL;
 
     renderer->vkUpdateDescriptorSets(
@@ -13925,149 +13761,130 @@ static void VULKAN_INTERNAL_AssignResource(
         &writeDescriptorSet,
         0,
         NULL);
+
+    return true;
+}
+
+static SDL_GPUResourceHandle * VULKAN_INTERNAL_AllocateResource(
+    VulkanRenderer* renderer,
+    VulkanResourceSet *resourceSet,
+    VkDescriptorType type,
+    void* backingContainer)
+{
+    Uint32 slot = SDL_AddAtomicU32(&resourceSet->resourceCount, 1);
+    VulkanResourceContainer *container = &resourceSet->resources[slot];
+
+    container->resourceCapacity = 1;
+    container->resourceCount = 0;
+    container->resources = SDL_malloc(
+        container->resourceCapacity * sizeof(VulkanResource));
+
+    container->type = type;
+    container->backingContainer = backingContainer;
+    container->activeResource = NULL;
+
+    return (SDL_GPUResourceHandle *)container;
+}
+
+static SDL_GPUResourceHandle * VULKAN_AllocateResourceSampler(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUSampler *sampler)
+{
+    return VULKAN_INTERNAL_AllocateResource(
+        (VulkanRenderer *)driverData,
+        (VulkanResourceSet *)resource_set,
+        VK_DESCRIPTOR_TYPE_SAMPLER,
+        sampler);
+}
+
+static SDL_GPUResourceHandle * VULKAN_AllocateResourceSampledTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUTexture *texture)
+{
+    return VULKAN_INTERNAL_AllocateResource(
+        (VulkanRenderer *)driverData,
+        (VulkanResourceSet *)resource_set,
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        texture);
+}
+
+static SDL_GPUResourceHandle * VULKAN_AllocateResourceStorageTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUTexture *texture)
+{
+    return VULKAN_INTERNAL_AllocateResource(
+        (VulkanRenderer *)driverData,
+        (VulkanResourceSet *)resource_set,
+        VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        texture);
+}
+
+static SDL_GPUResourceHandle * VULKAN_AllocateResourceStorageBuffer(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUBuffer *buffer)
+{
+    return VULKAN_INTERNAL_AllocateResource(
+        (VulkanRenderer *)driverData,
+        (VulkanResourceSet *)resource_set,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        buffer);
+}
+
+static void VULKAN_ReleaseResource(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceHandle *resource)
+{
+    VulkanResourceContainer *container = (VulkanResourceContainer *)resource;
+
+    // TODO: Add used slots to free list
+    // TODO: Add resource index to free list
+
+    SDL_free(container->resources);
+    container->resources = NULL;
 }
 
 static bool VULKAN_ResolveResource(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUResource *resource,
+    SDL_GPUResourceHandle *resource,
     Uint32 *slot)
 {
     VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
     VulkanRenderer *renderer = vulkanCommandBuffer->renderer;
     VulkanResourceSet *resourceSet = vulkanCommandBuffer->resourceSet;
-    VulkanResourceSetContainer *resourceSetContainer = resourceSet->container;
     VulkanResourceContainer *resourceContainer = (VulkanResourceContainer *)resource;
 
     // TODO: Ensure that commandBuffer resourceSetContainer matches resourceContainer resourceSetContainer?
 
-    // VulkanResourceSetContainer *container = vulkanResource->container;
+    if (!VULKAN_INTERNAL_EnsureResourceSlot(renderer, resourceSet, resourceContainer) || resourceContainer->activeResource == NULL) {
+        return false;
+    }
+
+    *slot = resourceContainer->activeResource->slot;
+
+    // VULKAN_INTERNAL_TrackResourceSlot(vulkanCommandBuffer, resourceSet, *slot);
 
     switch (resourceContainer->type) {
-        case VK_DESCRIPTOR_TYPE_SAMPLER: {
-            VulkanSampler *sampler = (VulkanSampler *)resourceContainer->backingContainer;
-
-            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != sampler) {
-                VkDescriptorImageInfo imageInfo;
-                imageInfo.sampler = sampler->sampler;
-                imageInfo.imageView = VK_NULL_HANDLE;
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-                VULKAN_INTERNAL_AssignResource(
-                    renderer,
-                    resourceContainer,
-                    VK_DESCRIPTOR_TYPE_SAMPLER,
-                    &resourceSetContainer->numSamplers,
-                    sampler,
-                    resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLER],
-                    &imageInfo,
-                    NULL);
-            }
-
-            if (resourceContainer->activeResource == NULL) {
-                return false;
-            }
-            
+        case VK_DESCRIPTOR_TYPE_SAMPLER:
             VULKAN_INTERNAL_TrackSampler(vulkanCommandBuffer, resourceContainer->activeResource->backing);
-            *slot = resourceContainer->activeResource->slot;
-
-            return true;
-        }
-        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: {
-            VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
-            VulkanTexture *texture = textureContainer->activeTexture;
-
-            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != texture) {
-                VkDescriptorImageInfo imageInfo;
-                imageInfo.sampler = VK_NULL_HANDLE;
-                imageInfo.imageView = texture->fullView;
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-                VULKAN_INTERNAL_AssignResource(
-                    renderer,
-                    resourceContainer,
-                    VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                    &resourceSetContainer->numResources,
-                    texture,
-                    resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_SAMPLED_TEXTURE],
-                    &imageInfo,
-                    NULL);
-            }
-
-            if (resourceContainer->activeResource == NULL) {
-                return false;
-            }
-
+            break;
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
             VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, resourceContainer->activeResource->backing);
-            *slot = resourceContainer->activeResource->slot;
-
-            return true;
-        }
-        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
-            VulkanTextureContainer *textureContainer = (VulkanTextureContainer *)resourceContainer->backingContainer;
-            VulkanTexture *texture = textureContainer->activeTexture;
-
-            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != texture) {
-                VkDescriptorImageInfo imageInfo;
-                imageInfo.sampler = VK_NULL_HANDLE;
-                imageInfo.imageView = texture->fullView;
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-                VULKAN_INTERNAL_AssignResource(
-                    renderer,
-                    resourceContainer,
-                    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                    &resourceSetContainer->numResources,
-                    texture,
-                    resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_TEXTURE],
-                    &imageInfo,
-                    NULL);
-            }
-
-            if (resourceContainer->activeResource == NULL) {
-                return false;
-            }
-
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
             VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, resourceContainer->activeResource->backing);
-            *slot = resourceContainer->activeResource->slot;
-
-            return true;
-        }
-        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: {
-            VulkanBufferContainer *bufferContainer = (VulkanBufferContainer *)resourceContainer->backingContainer;
-            VulkanBuffer *buffer = bufferContainer->activeBuffer;
-
-            if (resourceContainer->activeResource == NULL || resourceContainer->activeResource->backing != buffer) {
-                VkDescriptorBufferInfo bufferInfo;
-                bufferInfo.buffer = buffer->buffer;
-                bufferInfo.offset = 0;
-                bufferInfo.range = VK_WHOLE_SIZE;
-
-                VULKAN_INTERNAL_AssignResource(
-                    renderer,
-                    resourceContainer,
-                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                    &resourceSetContainer->numResources,
-                    buffer,
-                    resourceSet->descriptorSets[RESOURCE_DESCRIPTOR_SET_STORAGE_BUFFER],
-                    NULL,
-                    &bufferInfo);
-            }
-
-            if (resourceContainer->activeResource == NULL) {
-                return false;
-            }
-
+            break;
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
             VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, resourceContainer->activeResource->backing);
-            *slot = resourceContainer->activeResource->slot;
-
-            return true;
-        }
+            break;
         default:
-            SDL_SetError("Vulkan container type unsupported %d", resourceContainer->type);
             return false;
     }
 
-    return false;
+    return true;
 }
 
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
