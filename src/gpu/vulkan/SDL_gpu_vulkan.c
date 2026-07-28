@@ -13734,8 +13734,11 @@ static bool VULKAN_INTERNAL_AcquireResourceSlot(
     for (i = 0; i < subresources->releasedSlotCount; i += 1) {
         Uint32 releasedSlot = subresources->releasedSlots[i];
         if (SDL_GetAtomicInt(&subresources->referenceCounts[releasedSlot]) == 0) {
-
+            subresources->releasedSlotCount--;
+            subresources->releasedSlots[i] = subresources->releasedSlots[subresources->releasedSlotCount];
             SDL_UnlockMutex(subresources->lock);
+            *slot = releasedSlot;
+            return true;
         }
     }
 
