@@ -13638,7 +13638,7 @@ static void VULKAN_CreateResourceSetSubresources(
 {
     subresources->lock = SDL_CreateMutex();
 
-    subresources->containers = SDL_malloc(numSubresources * sizeof(VulkanResourceContainer));
+    subresources->containers = SDL_calloc(numSubresources, sizeof(VulkanResourceContainer));
     subresources->containerCapacity = numSubresources;
 
     subresources->releasedContainers = SDL_malloc(numSubresources * sizeof(Uint32));
@@ -13786,12 +13786,17 @@ static bool VULKAN_INTERNAL_EnsureResourceSlot(
         }
     }
 
-    EXPAND_ARRAY_IF_NEEDED(
-        container->resources,
-        VulkanResource,
-        container->resourceCount + 1,
-        container->resourceCapacity,
-        container->resourceCapacity * 2);
+    if (container->resources == NULL) {
+        container->resources = SDL_malloc(sizeof(VulkanResource));
+        container->resourceCapacity = 1;
+    } else {
+        EXPAND_ARRAY_IF_NEEDED(
+            container->resources,
+            VulkanResource,
+            container->resourceCount + 1,
+            container->resourceCapacity,
+            container->resourceCapacity * 2);
+    }
 
     activeResource = &container->resources[container->resourceCount++];
 
@@ -13864,6 +13869,7 @@ static bool VULKAN_INTERNAL_EnsureResourceSlot(
 
 static SDL_GPUResourceID VULKAN_INTERNAL_AllocateResource(
     VulkanRenderer* renderer,
+    VulkanResourceSet *resourceSet,
     VulkanResourceSetSubresources *subresources,
     VkDescriptorType descriptorType,
     void* backingContainer)
@@ -13874,12 +13880,12 @@ static SDL_GPUResourceID VULKAN_INTERNAL_AllocateResource(
 
     if (subresources->releasedContainerCount > 0) {
         subresources->releasedContainerCount -= 1;
-        slot = subresources->releasedContainerCount - 1;
+        slot = subresources->releasedContainers[subresources->releasedContainerCount];
+    } else {
+        slot = SDL_AddAtomicU32(&subresources->containerCount, 1);
     }
 
     SDL_UnlockMutex(subresources->lock);
-
-    slot = SDL_AddAtomicU32(&subresources->containerCount, 1);
 
     if (slot >= subresources->containerCapacity) {
         return 0;
@@ -13887,17 +13893,24 @@ static SDL_GPUResourceID VULKAN_INTERNAL_AllocateResource(
 
     VulkanResourceContainer *container = &subresources->containers[slot];
     Uint32 version = SDL_AddAtomicU32(&container->version, 1) + 1;
-
-    container->resourceCapacity = 1;
-    container->resourceCount = 0;
-    container->resources = SDL_malloc(
-        container->resourceCapacity * sizeof(VulkanResource));
+    if (version >= 0xFFFFFF) {
+        SDL_SetAtomicU32(&container->version, 1);
+        version = 1;
+    }
 
     container->type = descriptorType;
     container->backingContainer = backingContainer;
     container->activeResource = NULL;
 
-    return ((Uint64)slot << 32) | ((Uint64)(Uint8)descriptorType << 24) | (Uint64)version;
+    if (!VULKAN_INTERNAL_EnsureResourceSlot(
+        renderer,
+        resourceSet,
+        container)) {
+        // TODO: Cleanup
+        return 0;
+    }
+
+    return ((Uint64)slot << 32) | ((Uint64)(descriptorType & 0xFF) << 24) | (Uint64)version;
 }
 
 static SDL_GPUResourceID VULKAN_AllocateResourceSampler(
@@ -13905,9 +13918,12 @@ static SDL_GPUResourceID VULKAN_AllocateResourceSampler(
     SDL_GPUResourceSet *resource_set,
     SDL_GPUSampler *sampler)
 {
+    VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
+
     return VULKAN_INTERNAL_AllocateResource(
         (VulkanRenderer *)driverData,
-        &((VulkanResourceSet *)resource_set)->samplers,
+        resourceSet,
+        &resourceSet->samplers,
         VK_DESCRIPTOR_TYPE_SAMPLER,
         sampler);
 }
@@ -13917,9 +13933,12 @@ static SDL_GPUResourceID VULKAN_AllocateResourceTexture(
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture)
 {
+    VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
+
     return VULKAN_INTERNAL_AllocateResource(
         (VulkanRenderer *)driverData,
-        &((VulkanResourceSet *)resource_set)->resources,
+        resourceSet,
+        &resourceSet->resources,
         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
         texture);
 }
@@ -13929,9 +13948,12 @@ static SDL_GPUResourceID VULKAN_AllocateResourceStorageTexture(
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture)
 {
+    VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
+
     return VULKAN_INTERNAL_AllocateResource(
         (VulkanRenderer *)driverData,
-        &((VulkanResourceSet *)resource_set)->resources,
+        resourceSet,
+        &resourceSet->resources,
         VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
         texture);
 }
@@ -13941,39 +13963,70 @@ static SDL_GPUResourceID VULKAN_AllocateResourceStorageBuffer(
     SDL_GPUResourceSet *resource_set,
     SDL_GPUBuffer *buffer)
 {
+    VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
+
     return VULKAN_INTERNAL_AllocateResource(
         (VulkanRenderer *)driverData,
-        &((VulkanResourceSet *)resource_set)->resources,
+        resourceSet,
+        &resourceSet->resources,
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         buffer);
 }
+
+#define DECODE_RESOURCE_ID(id, index, type, version) \
+    Uint32 containerIndex = (Uint32)(resource >> 32); \
+    VkDescriptorType descriptorType = (VkDescriptorType)((resource >> 24) & 0xFF); \
+    Uint32 version = (Uint32)(resource & 0xFFFFFF)
 
 static void VULKAN_ReleaseResource(
     SDL_GPURenderer *driverData,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUResourceID resource)
 {
-    // Uint32 i;
+    Uint32 i;
+    VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
 
-    // VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
-    // VulkanResourceContainer *container = &resourceSet->resources[resource];
+    DECODE_RESOURCE_ID(id, containerIndex, descriptorType, version);
 
-    // EXPAND_ARRAY_IF_NEEDED(
-    //     resourceSet->releasedSlots,
-    //     Uint32,
-    //     resourceSet->releasedSlotCount + container->resourceCount,
-    //     resourceSet->releasedSlotCapacity,
-    //     resourceSet->releasedSlotCapacity * 2);
+    VulkanResourceSetSubresources *subresources = descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER ? &resourceSet->samplers : &resourceSet->resources;
 
-    // for (i = 0; i < container->resourceCount; i += 1) {
-    //     resourceSet->releasedSlots[resourceSet->releasedSlotCount++] =
-    //         container->resources[i].slot;
-    // }
+    if (containerIndex >= SDL_GetAtomicU32(&subresources->containerCount)) {
+        return;
+    }
 
-    // TODO: Add resource index to free list
+    VulkanResourceContainer *resourceContainer = &subresources->containers[containerIndex];
 
-    // SDL_free(container->resources);
-    // container->resources = NULL;
+    if (SDL_GetAtomicU32(&resourceContainer->version) != version) {
+        return;
+    }
+
+    SDL_AddAtomicU32(&resourceContainer->version, 1);
+
+    SDL_LockMutex(subresources->lock);
+
+    EXPAND_ARRAY_IF_NEEDED(
+        subresources->releasedSlots,
+        Uint32,
+        subresources->releasedSlotCount + resourceContainer->resourceCount,
+        subresources->releasedSlotCapacity,
+        subresources->releasedSlotCapacity * 2);
+
+    for (i = 0; i < resourceContainer->resourceCount; i += 1) {
+        subresources->releasedSlots[subresources->releasedSlotCount++] = resourceContainer->resources[i].slot;
+    }
+
+    EXPAND_ARRAY_IF_NEEDED(
+        subresources->releasedContainers,
+        Uint32,
+        subresources->releasedContainerCount + 1,
+        subresources->releasedContainerCapacity,
+        subresources->releasedContainerCapacity * 2);
+
+    subresources->releasedContainers[subresources->releasedContainerCount++] = containerIndex;
+
+    resourceContainer->resourceCount = 0;
+
+    SDL_UnlockMutex(subresources->lock);
 }
 
 static bool VULKAN_ResolveResource(
@@ -13986,9 +14039,7 @@ static bool VULKAN_ResolveResource(
     VulkanRenderer *renderer = vulkanCommandBuffer->renderer;
     VulkanResourceSet *resourceSet = (VulkanResourceSet *)resource_set;
 
-    Uint32 containerIndex = (Uint32)(resource >> 32);
-    VkDescriptorType descriptorType = (Uint8)(resource >> 24);
-    Uint32 version = (Uint32)(resource << 8) >> 8;
+    DECODE_RESOURCE_ID(id, containerIndex, descriptorType, version);
 
     VulkanResourceSetSubresources *subresources = descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER ? &resourceSet->samplers : &resourceSet->resources;
 
@@ -14029,6 +14080,8 @@ static bool VULKAN_ResolveResource(
 
     return true;
 }
+
+#undef DECODE_RESOURCE_ID
 
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer, VkDescriptorType descriptorType, VkDescriptorSetLayout *descriptorSetLayout)
 {
