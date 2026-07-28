@@ -3669,7 +3669,7 @@ void SDL_ReleaseGPUResourceSet(
         resource_set);
 }
 
-SDL_GPUResourceHandle * SDL_AllocateGPUResourceSampler(
+SDL_GPUResourceID SDL_AllocateGPUResourceSampler(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUSampler *sampler)
@@ -3680,18 +3680,18 @@ SDL_GPUResourceHandle * SDL_AllocateGPUResourceSampler(
         sampler);
 }
 
-SDL_GPUResourceHandle * SDL_AllocateGPUResourceSampledTexture(
+SDL_GPUResourceID SDL_AllocateGPUResourceTexture(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture)
 {
-    return device->AllocateResourceSampledTexture(
+    return device->AllocateResourceTexture(
         device->driverData,
         resource_set,
         texture);
 }
 
-SDL_GPUResourceHandle * SDL_AllocateGPUResourceStorageTexture(
+SDL_GPUResourceID SDL_AllocateGPUResourceStorageTexture(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture)
@@ -3702,7 +3702,7 @@ SDL_GPUResourceHandle * SDL_AllocateGPUResourceStorageTexture(
         texture);
 }
 
-SDL_GPUResourceHandle * SDL_AllocateGPUResourceStorageBuffer(
+SDL_GPUResourceID SDL_AllocateGPUResourceStorageBuffer(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUBuffer *buffer)
@@ -3715,17 +3715,24 @@ SDL_GPUResourceHandle * SDL_AllocateGPUResourceStorageBuffer(
 
 bool SDL_ResolveGPUResource(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceHandle *resource,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource,
     Uint32 *slot)
 {
-    return COMMAND_BUFFER_DEVICE->ResolveResource(command_buffer, resource, slot);
+    return COMMAND_BUFFER_DEVICE->ResolveResource(
+        command_buffer,
+        resource_set,
+        resource,
+        slot);
 }
 
 void SDL_ReleaseGPUResource(
     SDL_GPUDevice *device,
-    SDL_GPUResourceHandle *resource)
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource)
 {
     device->ReleaseResource(
         device->driverData,
+        resource_set,
         resource);
 }

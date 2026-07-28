@@ -4650,7 +4650,7 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 #define SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING                 "SDL.gpu.resourceset.create.name"
 
 typedef struct SDL_GPUResourceSet SDL_GPUResourceSet;
-typedef struct SDL_GPUResourceHandle SDL_GPUResourceHandle;
+typedef Uint64 SDL_GPUResourceID;
 
 typedef struct SDL_GPUResourceSetCreateInfo
 {
@@ -4668,29 +4668,30 @@ extern SDL_DECLSPEC void SDLCALL SDL_ReleaseGPUResourceSet(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set);
 
-extern SDL_DECLSPEC SDL_GPUResourceHandle * SDLCALL SDL_AllocateGPUResourceSampler(
+extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceSampler(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUSampler *sampler);
 
-extern SDL_DECLSPEC SDL_GPUResourceHandle * SDLCALL SDL_AllocateGPUResourceSampledTexture(
+extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceTexture(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture);
 
-extern SDL_DECLSPEC SDL_GPUResourceHandle * SDLCALL SDL_AllocateGPUResourceStorageTexture(
+extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceStorageTexture(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUTexture *texture);
 
-extern SDL_DECLSPEC SDL_GPUResourceHandle * SDLCALL SDL_AllocateGPUResourceStorageBuffer(
+extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceStorageBuffer(
     SDL_GPUDevice *device,
     SDL_GPUResourceSet *resource_set,
     SDL_GPUBuffer *buffer);
 
 extern SDL_DECLSPEC void SDLCALL SDL_ReleaseGPUResource(
     SDL_GPUDevice *device,
-    SDL_GPUResourceHandle *resource);
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource);
 
 extern SDL_DECLSPEC void SDLCALL SDL_BindGPUResourceSet(
     SDL_GPUCommandBuffer *command_buffer,
@@ -4698,7 +4699,8 @@ extern SDL_DECLSPEC void SDLCALL SDL_BindGPUResourceSet(
 
 extern SDL_DECLSPEC bool SDLCALL SDL_ResolveGPUResource(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceHandle *resource,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource,
     Uint32 *slot);
 
 #ifdef __cplusplus

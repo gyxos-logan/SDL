@@ -1137,34 +1137,36 @@ struct SDL_GPUDevice
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource);
 
-    SDL_GPUResourceHandle *(*AllocateResourceSampler)(
+    SDL_GPUResourceID (*AllocateResourceSampler)(
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource_set,
         SDL_GPUSampler *texture);
 
-    SDL_GPUResourceHandle *(*AllocateResourceSampledTexture)(
+    SDL_GPUResourceID (*AllocateResourceTexture)(
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource_set,
         SDL_GPUTexture *texture);
 
-    SDL_GPUResourceHandle *(*AllocateResourceStorageTexture)(
+    SDL_GPUResourceID (*AllocateResourceStorageTexture)(
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource_set,
         SDL_GPUTexture *texture);
 
-    SDL_GPUResourceHandle *(*AllocateResourceStorageBuffer)(
+    SDL_GPUResourceID (*AllocateResourceStorageBuffer)(
         SDL_GPURenderer *renderer,
         SDL_GPUResourceSet *resource_set,
         SDL_GPUBuffer *buffer);
 
     bool (*ResolveResource)(
         SDL_GPUCommandBuffer *command_buffer,
-        SDL_GPUResourceHandle *resource,
+        SDL_GPUResourceSet *resource_set,
+        SDL_GPUResourceID resource,
         Uint32 *slot);
 
     void (*ReleaseResource)(
         SDL_GPURenderer *renderer,
-        SDL_GPUResourceHandle *resource);
+        SDL_GPUResourceSet *resource_set,
+        SDL_GPUResourceID resource);
 };
 
 #define ASSIGN_DRIVER_FUNC(func, name) \
@@ -1261,7 +1263,7 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(BindResourceSet, name)               \
     ASSIGN_DRIVER_FUNC(ReleaseResourceSet, name)            \
     ASSIGN_DRIVER_FUNC(AllocateResourceSampler, name)       \
-    ASSIGN_DRIVER_FUNC(AllocateResourceSampledTexture, name)\
+    ASSIGN_DRIVER_FUNC(AllocateResourceTexture, name)\
     ASSIGN_DRIVER_FUNC(AllocateResourceStorageTexture, name)\
     ASSIGN_DRIVER_FUNC(AllocateResourceStorageBuffer, name) \
     ASSIGN_DRIVER_FUNC(ResolveResource, name)               \
