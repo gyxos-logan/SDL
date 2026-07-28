@@ -9363,6 +9363,75 @@ static XrResult D3D12_CreateXRSession(
 #endif
 }
 
+static SDL_GPUResourceSet *D3D12_CreateResourceSet(
+    SDL_GPURenderer *driverData,
+    const SDL_GPUResourceSetCreateInfo *createinfo)
+{
+    return NULL; // TODO Implement
+}
+
+static void D3D12_BindResourceSet(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUResourceSet *resourceSet)
+{
+}
+
+static void D3D12_ReleaseResourceSet(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resourceSet)
+{
+    // TODO Implement
+}
+
+static SDL_GPUResourceID D3D12_AllocateResourceSampler(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUSampler *sampler)
+{
+    return 0; // TODO Implement
+}
+
+static SDL_GPUResourceID D3D12_AllocateResourceTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUTexture *texture)
+{
+    return 0; // TODO Implement
+}
+
+static SDL_GPUResourceID D3D12_AllocateResourceStorageTexture(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUTexture *texture)
+{
+    return 0; // TODO Implement
+}
+
+static SDL_GPUResourceID D3D12_AllocateResourceStorageBuffer(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUBuffer *buffer)
+{
+    return 0; // TODO Implement
+}
+
+static void D3D12_ReleaseResource(
+    SDL_GPURenderer *driverData,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource)
+{
+    // TODO Implement
+}
+
+static bool D3D12_ResolveResource(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUResourceSet *resource_set,
+    SDL_GPUResourceID resource,
+    Uint32 *slot)
+{
+    return false; // TODO Implement
+}
+
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
 {
     SDL_GPUDevice *result;
