@@ -13465,77 +13465,6 @@ static XrResult VULKAN_CreateXRSession(
 //     Uint32 slot;
 // };
 
-// static bool VULKAN_INTERNAL_CreateResourceSetDescriptors(
-//     VulkanRenderer *renderer,
-//     VulkanResourceSet *resourceSet)
-// {
-//     VkDescriptorPoolCreateInfo descriptorPoolInfo;
-//     VkDescriptorPoolSize poolSizes[4];
-//     Uint32 descriptorCounts[4];
-//     VkResult vulkanResult;
-//     SDL_GPUResourceSetCreateInfo *createinfo = &resourceSet->info;
-
-//     if (!renderer->bindlessResources) {
-//         SDL_SetError("Bindless resources are not enabled for this device");
-//         return false;
-//     }
-
-//     if (resourceSet->info.num_samplers > 65536 || resourceSet->info.num_resources > 65536) {
-//         SDL_SetError("Bindless resources cannot exceed 65536 samplers or resources (TODO detect correct max value)");
-//         return false;
-//     }
-
-//     poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-//     poolSizes[0].descriptorCount = createinfo->num_samplers;
-//     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-//     poolSizes[1].descriptorCount = createinfo->num_resources;
-//     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-//     poolSizes[2].descriptorCount = createinfo->num_resources;
-//     poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-//     poolSizes[3].descriptorCount = createinfo->num_resources;
-
-//     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-//     descriptorPoolInfo.pNext = NULL;
-//     descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-//     descriptorPoolInfo.maxSets = 4;
-//     descriptorPoolInfo.poolSizeCount = 4;
-//     descriptorPoolInfo.pPoolSizes = poolSizes;
-
-//     vulkanResult = renderer->vkCreateDescriptorPool(
-//         renderer->logicalDevice,
-//         &descriptorPoolInfo,
-//         NULL,
-//         &resourceSet->descriptorPool);
-
-//     // TODO: Cleanup on failure
-//     CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, false);
-
-//     descriptorCounts[0] = createinfo->num_samplers;
-//     descriptorCounts[1] = createinfo->num_resources;
-//     descriptorCounts[2] = createinfo->num_resources;
-//     descriptorCounts[3] = createinfo->num_resources;
-
-//     VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountAllocateInfo;
-//     variableDescriptorCountAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-//     variableDescriptorCountAllocateInfo.pNext = NULL;
-//     variableDescriptorCountAllocateInfo.descriptorSetCount = 4;
-//     variableDescriptorCountAllocateInfo.pDescriptorCounts = descriptorCounts;
-
-//     VkDescriptorSetAllocateInfo allocateInfo;
-//     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-//     allocateInfo.pNext = &variableDescriptorCountAllocateInfo;
-//     allocateInfo.descriptorPool = resourceSet->descriptorPool;
-//     allocateInfo.descriptorSetCount = 4;
-//     allocateInfo.pSetLayouts = renderer->bindlessDescriptorSetLayouts;
-
-//     vulkanResult = renderer->vkAllocateDescriptorSets(renderer->logicalDevice, &allocateInfo, resourceSet->descriptorSets);
-
-//     // TODO: Cleanup on failure
-//     CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, false);
-
-//     return true;
-// }
-
 // static void VULKAN_CreateResourceSetSubresources(
 //     VulkanRenderer *renderer,
 //     VulkanResourceSetSubresources *subresources,
@@ -14012,7 +13941,7 @@ static SDL_GPUResourceHandle VULKAN_ResolveBuffer(
     return 0; // TODO Implement bindless
 }
 
-static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer)
+static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
 {
     VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     VkDescriptorSetLayoutBinding descriptorSetLayoutBinding[4];
@@ -14069,6 +13998,57 @@ static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *re
     if (vulkanResult != VK_SUCCESS) {
         CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorSetLayout, false);
     }
+
+    VkDescriptorPoolSize poolSizes[4];
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[0].descriptorCount = renderer->bindlessSamplerCapacity;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[1].descriptorCount = renderer->bindlessResourceCapacity;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[2].descriptorCount = renderer->bindlessResourceCapacity;
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = renderer->bindlessResourceCapacity;
+
+    VkDescriptorPoolCreateInfo descriptorPoolInfo;
+    descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    descriptorPoolInfo.pNext = NULL;
+    descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    descriptorPoolInfo.maxSets = 1;
+    descriptorPoolInfo.poolSizeCount = 4;
+    descriptorPoolInfo.pPoolSizes = poolSizes;
+
+    vulkanResult = renderer->vkCreateDescriptorPool(
+        renderer->logicalDevice,
+        &descriptorPoolInfo,
+        NULL,
+        &renderer->bindlessDescriptorPool);
+
+    // TODO: Cleanup on failure
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, false);
+
+    Uint32 descriptorCounts[4];
+    descriptorCounts[0] = renderer->bindlessSamplerCapacity;
+    descriptorCounts[1] = renderer->bindlessResourceCapacity;
+    descriptorCounts[2] = renderer->bindlessResourceCapacity;
+    descriptorCounts[3] = renderer->bindlessResourceCapacity;
+
+    VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountAllocateInfo;
+    variableDescriptorCountAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    variableDescriptorCountAllocateInfo.pNext = NULL;
+    variableDescriptorCountAllocateInfo.descriptorSetCount = 1;
+    variableDescriptorCountAllocateInfo.pDescriptorCounts = descriptorCounts;
+
+    VkDescriptorSetAllocateInfo allocateInfo;
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.pNext = &variableDescriptorCountAllocateInfo;
+    allocateInfo.descriptorPool = renderer->bindlessDescriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &renderer->bindlessDescriptorSetLayout;
+
+    vulkanResult = renderer->vkAllocateDescriptorSets(renderer->logicalDevice, &allocateInfo, &renderer->bindlessDescriptorSet);
+
+    // TODO: Cleanup on failure
+    CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkAllocateDescriptorSets, false);
 
     return true;
 }
@@ -14484,7 +14464,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         renderer->allocationsToDefragCapacity * sizeof(VulkanMemoryAllocation *));
 
     if (renderer->bindless) {
-        bool success = VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(renderer);
+        bool success = VULKAN_INTERNAL_CreateBindlessResources(renderer);
         
         if (!success) {
             return NULL; // TODO cleanup
