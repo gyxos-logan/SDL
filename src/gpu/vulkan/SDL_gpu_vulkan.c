@@ -12979,6 +12979,9 @@ static bool VULKAN_INTERNAL_PrepareVulkan(
     VULKAN_INTERNAL_AddOptInVulkanOptions(props, renderer, features);
 
     if (renderer->bindless) {
+        features->usesCustomVulkanOptions = true;
+        features->desiredApiVersion = SDL_max(features->desiredApiVersion, VK_API_VERSION_1_2);
+
         features->desiredVulkan12DeviceFeatures.runtimeDescriptorArray = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorIndexing = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorBindingPartiallyBound = VK_TRUE;
