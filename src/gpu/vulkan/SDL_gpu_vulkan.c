@@ -4066,7 +4066,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
     }
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
-    VkDescriptorSetLayout descriptorSetLayouts[8];
+    VkDescriptorSetLayout descriptorSetLayouts[4];
     VkResult vulkanResult;
 
     pipelineResourceLayout = SDL_calloc(1, sizeof(VulkanGraphicsPipelineResourceLayout));
@@ -5162,12 +5162,10 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->descriptorSetLayoutFetchLock);
     SDL_DestroyMutex(renderer->windowLock);
 
-    // if (renderer->bindlessResources) {
-    //     renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayouts[0], NULL);
-    //     renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayouts[1], NULL);
-    //     renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayouts[2], NULL);
-    //     renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayouts[3], NULL);
-    // }
+    if (renderer->bindless) {
+        renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
+        renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
+    }
 
     renderer->vkDestroyDevice(renderer->logicalDevice, NULL);
     renderer->vkDestroyInstance(renderer->instance, NULL);
