@@ -4365,7 +4365,7 @@ static bool METAL_PrepareDriver(SDL_VideoDevice *this, SDL_PropertiesID props)
     bool bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
 
     if (bindless) {
-        if (!@available(macOS 13.0, *)) {
+        if (!@available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) {
             return false;
         }
     }
