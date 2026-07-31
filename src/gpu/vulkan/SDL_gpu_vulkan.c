@@ -1300,6 +1300,8 @@ struct VulkanRenderer
     VkDescriptorSetLayout bindlessDescriptorSetLayout;
     VkDescriptorPool bindlessDescriptorPool;
     VkDescriptorSet bindlessDescriptorSet;
+
+    SDL_Mutex *bindlessDescriptorSetWrite;
 };
 
 // Forward declarations
@@ -4398,12 +4400,14 @@ static VulkanBuffer *VULKAN_INTERNAL_CreateBuffer(
         writeDescriptorSet.pBufferInfo = &bufferInfo;
         writeDescriptorSet.pTexelBufferView = NULL;
 
+        SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
         renderer->vkUpdateDescriptorSets(
             renderer->logicalDevice,
             1,
             &writeDescriptorSet,
             0,
             NULL);
+        SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
     }
 
     return buffer;
@@ -6098,12 +6102,14 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
         writeDescriptorSets[1].pBufferInfo = NULL;
         writeDescriptorSets[1].pTexelBufferView = NULL;
 
+        SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
         renderer->vkUpdateDescriptorSets(
             renderer->logicalDevice,
             2,
             writeDescriptorSets,
             0,
             NULL);
+        SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
     }
 
     return texture;
@@ -7010,12 +7016,14 @@ static SDL_GPUSampler *VULKAN_CreateSampler(
         writeDescriptorSet.pBufferInfo = NULL;
         writeDescriptorSet.pTexelBufferView = NULL;
 
+        SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
         renderer->vkUpdateDescriptorSets(
             renderer->logicalDevice,
             1,
             &writeDescriptorSet,
             0,
             NULL);
+        SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
     }
 
     return (SDL_GPUSampler *)vulkanSampler;
@@ -14056,6 +14064,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
     if (renderer->bindless) {
         SDL_SetAtomicU32(&renderer->bindlessSamplerCount, 0);
         SDL_SetAtomicU32(&renderer->bindlessResourceCount, 0);
+        renderer->bindlessDescriptorSetWrite = SDL_CreateMutex();
 
         bool success = VULKAN_INTERNAL_CreateBindlessResources(renderer);
         
