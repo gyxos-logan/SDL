@@ -4435,7 +4435,7 @@ static VulkanBuffer *VULKAN_INTERNAL_CreateBuffer(
             &nameInfo);
     }
 
-    if (renderer->bindless) {
+    if (renderer->bindless && buffer->type == VULKAN_BUFFER_TYPE_GPU) {
         buffer->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
 
         VkDescriptorBufferInfo bufferInfo;
@@ -4450,7 +4450,7 @@ static VulkanBuffer *VULKAN_INTERNAL_CreateBuffer(
         writeDescriptorSet.dstBinding = 3;
         writeDescriptorSet.dstArrayElement = buffer->bindlessSlot;
         writeDescriptorSet.descriptorCount = 1;
-        writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writeDescriptorSet.pImageInfo = NULL;
         writeDescriptorSet.pBufferInfo = &bufferInfo;
         writeDescriptorSet.pTexelBufferView = NULL;
@@ -7061,7 +7061,7 @@ static SDL_GPUSampler *VULKAN_CreateSampler(
         writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeDescriptorSet.pNext = NULL;
         writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
-        writeDescriptorSet.dstBinding = 1;
+        writeDescriptorSet.dstBinding = 0;
         writeDescriptorSet.dstArrayElement = vulkanSampler->bindlessSlot;
         writeDescriptorSet.descriptorCount = 1;
         writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
@@ -14030,7 +14030,7 @@ static SDL_GPUResourceHandle VULKAN_ResolveSampler(
 
     VULKAN_INTERNAL_TrackSampler(vulkanCommandBuffer, vulkanSampler);
 
-    return (Uint64)vulkanSampler->bindlessSlot << 32 | 1;
+    return ((Uint64)1 << 32) | vulkanSampler->bindlessSlot;
 }
 
 static SDL_GPUResourceHandle VULKAN_ResolveTexture(
@@ -14047,7 +14047,7 @@ static SDL_GPUResourceHandle VULKAN_ResolveTexture(
 
     VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, activeTexture);
 
-    return (Uint64)activeTexture->bindlessSlot << 32 | 1;
+    return ((Uint64)1 << 32) | activeTexture->bindlessSlot;
 }
 
 static SDL_GPUResourceHandle VULKAN_ResolveBuffer(
@@ -14064,7 +14064,7 @@ static SDL_GPUResourceHandle VULKAN_ResolveBuffer(
 
     VULKAN_INTERNAL_TrackBuffer(vulkanCommandBuffer, activeBuffer);
 
-    return (Uint64)activeBuffer->bindlessSlot << 32 | 1;
+    return ((Uint64)1 << 32) | activeBuffer->bindlessSlot;
 }
 
 static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
