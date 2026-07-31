@@ -6100,7 +6100,7 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
 
         renderer->vkUpdateDescriptorSets(
             renderer->logicalDevice,
-            1,
+            2,
             writeDescriptorSets,
             0,
             NULL);
@@ -13628,21 +13628,9 @@ static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
     // TODO: Cleanup on failure
     CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorPool, false);
 
-    Uint32 descriptorCounts[4];
-    descriptorCounts[0] = renderer->bindlessSamplerCapacity;
-    descriptorCounts[1] = renderer->bindlessResourceCapacity;
-    descriptorCounts[2] = renderer->bindlessResourceCapacity;
-    descriptorCounts[3] = renderer->bindlessResourceCapacity;
-
-    VkDescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountAllocateInfo;
-    variableDescriptorCountAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-    variableDescriptorCountAllocateInfo.pNext = NULL;
-    variableDescriptorCountAllocateInfo.descriptorSetCount = 1;
-    variableDescriptorCountAllocateInfo.pDescriptorCounts = descriptorCounts;
-
     VkDescriptorSetAllocateInfo allocateInfo;
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.pNext = &variableDescriptorCountAllocateInfo;
+    allocateInfo.pNext = NULL;
     allocateInfo.descriptorPool = renderer->bindlessDescriptorPool;
     allocateInfo.descriptorSetCount = 1;
     allocateInfo.pSetLayouts = &renderer->bindlessDescriptorSetLayout;
