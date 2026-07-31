@@ -4168,16 +4168,16 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
         0,
         fragmentShader->numUniformBuffers);
 
-    descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
-    descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
-    descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[2]->descriptorSetLayout;
-    descriptorSetLayouts[3] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
-    // if (renderer->bindlessResources) {
-    //     descriptorSetLayouts[4] = renderer->bindlessDescriptorSetLayouts[0];
-    //     descriptorSetLayouts[5] = renderer->bindlessDescriptorSetLayouts[1];
-    //     descriptorSetLayouts[6] = renderer->bindlessDescriptorSetLayouts[2];
-    //     descriptorSetLayouts[7] = renderer->bindlessDescriptorSetLayouts[3];
-    // }
+    if (renderer->bindless) {
+        descriptorSetLayouts[0] = renderer->bindlessDescriptorSetLayout;
+        descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
+        descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
+    } else {
+        descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
+        descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
+        descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[2]->descriptorSetLayout;
+        descriptorSetLayouts[3] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
+    }
 
     pipelineResourceLayout->vertexSamplerCount = vertexShader->numSamplers;
     pipelineResourceLayout->vertexStorageTextureCount = vertexShader->numStorageTextures;
@@ -4194,7 +4194,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = 4; // renderer->bindlessResources ? 8 : 4;
+    pipelineLayoutCreateInfo.setLayoutCount = renderer->bindless ? 3 : 4;
     pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayouts;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
@@ -5605,32 +5605,26 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
         NULL);
 
     VkDescriptorSet sets[4];
-    sets[0] = commandBuffer->vertexResourceDescriptorSet;
-    sets[1] = commandBuffer->vertexUniformDescriptorSet;
-    sets[2] = commandBuffer->fragmentResourceDescriptorSet;
-    sets[3] = commandBuffer->fragmentUniformDescriptorSet;
+    if (renderer->bindless) {
+        sets[0] = renderer->bindlessDescriptorSet;
+        sets[1] = commandBuffer->vertexUniformDescriptorSet;
+        sets[2] = commandBuffer->fragmentUniformDescriptorSet;
+    } else {
+        sets[0] = commandBuffer->vertexResourceDescriptorSet;
+        sets[1] = commandBuffer->vertexUniformDescriptorSet;
+        sets[2] = commandBuffer->fragmentResourceDescriptorSet;
+        sets[3] = commandBuffer->fragmentUniformDescriptorSet;
+    }
 
     renderer->vkCmdBindDescriptorSets(
         commandBuffer->commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         resourceLayout->pipelineLayout,
         0,
-        4,
+        renderer->bindless ? 3 : 4,
         sets,
         dynamicOffsetCount,
         dynamicOffsets);
-    
-    // if (commandBuffer->resourceSet != NULL) {
-    //     renderer->vkCmdBindDescriptorSets(
-    //     commandBuffer->commandBuffer,
-    //     VK_PIPELINE_BIND_POINT_GRAPHICS,
-    //     resourceLayout->pipelineLayout,
-    //     4,
-    //     4,
-    //     commandBuffer->resourceSet->descriptorSets,
-    //     0,
-    //     NULL);
-    // }
 
     commandBuffer->needNewVertexUniformOffsets = false;
     commandBuffer->needNewFragmentUniformOffsets = false;
