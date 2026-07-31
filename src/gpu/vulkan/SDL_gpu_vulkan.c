@@ -5167,6 +5167,7 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->windowLock);
 
     if (renderer->bindless) {
+        SDL_DestroyMutex(renderer->bindlessDescriptorSetWrite);
         renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
         renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
     }
