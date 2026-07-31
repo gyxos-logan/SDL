@@ -866,6 +866,8 @@ struct D3D12Texture
 
     // XR swapchain images are managed by OpenXR runtime
     bool externallyManaged;
+
+    Uint32 bindlessSlot;
 };
 
 typedef struct D3D12Sampler
@@ -873,6 +875,8 @@ typedef struct D3D12Sampler
     SDL_GPUSamplerCreateInfo createInfo;
     D3D12StagingDescriptor handle;
     SDL_AtomicInt referenceCount;
+
+    Uint32 bindlessSlot;
 } D3D12Sampler;
 
 typedef struct D3D12WindowData
@@ -1032,6 +1036,18 @@ struct D3D12Renderer
     XrSystemId xrSystemId;
     XrInstancePfns *xr;
 #endif
+
+    bool bindless;
+    Uint32 bindlessSamplerCapacity;
+    Uint32 bindlessResourceCapacity;
+
+    SDL_AtomicU32 bindlessSamplerCount;
+    SDL_AtomicU32 bindlessResourceCount;
+
+    D3D12DescriptorHeap *bindlessDescriptorHeapSamplers;
+    D3D12DescriptorHeap *bindlessDescriptorHeapResources;
+
+    SDL_Mutex *bindlessDescriptorHeapWrite;
 };
 
 struct D3D12CommandBuffer
@@ -1244,6 +1260,8 @@ struct D3D12Buffer
     Uint8 *mapPointer; // NULL except for upload buffers and fast uniform buffers
     SDL_AtomicInt referenceCount;
     bool transitioned; // used for initial resource barrier
+
+    Uint32 bindlessSlot;
 };
 
 struct D3D12BufferContainer
@@ -2536,7 +2554,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = -1;
     }
 
-    if (vertexShader->num_samplers > 0) {
+    if (!renderer->bindless && vertexShader->num_samplers > 0) {
         // Vertex Samplers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
         descriptorRange.NumDescriptors = vertexShader->num_samplers;
@@ -2571,7 +2589,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (vertexShader->numStorageTextures) {
+    if (!renderer->bindless && vertexShader->numStorageTextures) {
         // Vertex storage textures
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = vertexShader->numStorageTextures;
@@ -2590,7 +2608,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (vertexShader->numStorageBuffers) {
+    if (!renderer->bindless && vertexShader->numStorageBuffers) {
 
         // Vertex storage buffers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -2621,7 +2639,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (fragmentShader->num_samplers) {
+    if (!renderer->bindless && fragmentShader->num_samplers) {
         // Fragment Samplers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
         descriptorRange.NumDescriptors = fragmentShader->num_samplers;
@@ -2656,7 +2674,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (fragmentShader->numStorageTextures) {
+    if (!renderer->bindless && fragmentShader->numStorageTextures) {
         // Fragment Storage Textures
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = fragmentShader->numStorageTextures;
@@ -2675,7 +2693,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (fragmentShader->numStorageBuffers) {
+    if (!renderer->bindless && fragmentShader->numStorageBuffers) {
         // Fragment Storage Buffers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = fragmentShader->numStorageBuffers;
@@ -2716,6 +2734,10 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     rootSignatureDesc.NumStaticSamplers = 0;
     rootSignatureDesc.pStaticSamplers = NULL;
     rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    if (renderer->bindless) {
+        rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    }
 
     // Serialize the root signature
     ID3DBlob *serializedRootSignature;
@@ -3396,6 +3418,21 @@ static SDL_GPUSampler *D3D12_CreateSampler(
 
     // Ignore name property because it is not applicable to D3D12.
 
+    if (renderer->bindless) {
+        sampler->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessSamplerCount, 1);
+
+        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapSamplers;
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (sampler->bindlessSlot * heap->descriptorSize);
+
+        ID3D12Device_CopyDescriptorsSimple(
+            renderer->device,
+            1,
+            gpuHeapCpuHandle,
+            sampler->handle.cpuHandle,
+            D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+    }
+
     return (SDL_GPUSampler *)sampler;
 }
 
@@ -3741,6 +3778,36 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
         texture->resource,
         debugName);
 
+    if (renderer->bindless) {
+        texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
+
+        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
+            (renderer->bindlessResourceCapacity * heap->descriptorSize) +
+            (texture->bindlessSlot * heap->descriptorSize);
+
+        ID3D12Device_CopyDescriptorsSimple(
+            renderer->device,
+            1,
+            gpuHeapCpuHandle,
+            texture->srvHandle.cpuHandle,
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        
+        if (texture->subresources != NULL && texture->subresources->uavHandle.heap != NULL) {
+            gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
+                (2 * renderer->bindlessResourceCapacity * heap->descriptorSize) +
+                (texture->bindlessSlot * heap->descriptorSize);
+
+            ID3D12Device_CopyDescriptorsSimple(
+                renderer->device,
+                1,
+                gpuHeapCpuHandle,
+                texture->subresources->uavHandle.cpuHandle,
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        }
+    }
+
     return texture;
 }
 
@@ -3997,6 +4064,23 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
         renderer,
         buffer->handle,
         debugName);
+
+    if (renderer->bindless) {
+        buffer->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
+
+        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
+        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
+            (renderer->bindlessResourceCapacity * heap->descriptorSize) +
+            (buffer->bindlessSlot * heap->descriptorSize);
+
+        ID3D12Device_CopyDescriptorsSimple(
+            renderer->device,
+            1,
+            gpuHeapCpuHandle,
+            buffer->srvDescriptor.cpuHandle,
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    }
 
     return buffer;
 }
@@ -8561,7 +8645,9 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
     // have to fuss with loading D3D in the first place.
     bool has_dxbc = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXBC_BOOLEAN, false);
     bool has_dxil = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, false);
+    bool bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
     bool supports_dxil = false;
+    bool supports_bindless = false;
     // TODO SM7: bool has_spirv = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, false);
     // TODO SM7: bool supports_spirv = false;
     if (!has_dxbc && !has_dxil) {
@@ -8706,6 +8792,20 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
             }
         }
 
+        if (bindless) {
+            D3D12_FEATURE_DATA_SHADER_MODEL shaderModel;
+            shaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+
+            res = ID3D12Device_CheckFeatureSupport(
+                device,
+                D3D12_FEATURE_SHADER_MODEL,
+                &shaderModel,
+                sizeof(shaderModel));
+            if (SUCCEEDED(res) && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
+                supports_bindless = true;
+            }
+        }
+
         ID3D12Device_Release(device);
     }
 
@@ -8722,6 +8822,11 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
 
     if (!supports_dxil && !has_dxbc) {
         SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "D3D12: DXIL is not supported and DXBC is not being provided");
+        return false;
+    }
+
+    if (bindless && !supports_bindless) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "D3D12: Shader Model 6.6 is required");
         return false;
     }
 
@@ -9367,21 +9472,38 @@ static SDL_GPUResourceHandle D3D12_ResolveSampler(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUSampler *sampler)
 {
-    return 0; // TODO Implement bindless
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12Sampler *d3d12Sampler = (D3D12Sampler *)sampler;
+
+    D3D12_INTERNAL_TrackSampler(d3d12CommandBuffer, d3d12Sampler);
+
+    return ((Uint64)1 << 32) | d3d12Sampler->bindlessSlot;
 }
 
 static SDL_GPUResourceHandle D3D12_ResolveTexture(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUTexture *texture)
 {
-    return 0; // TODO Implement bindless
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12TextureContainer *container = (D3D12TextureContainer *)texture;
+    D3D12Texture *activeTexture = container->activeTexture;
+
+    D3D12_INTERNAL_TrackTexture(d3d12CommandBuffer, activeTexture);
+
+    return ((Uint64)1 << 32) |  activeTexture->bindlessSlot;
 }
 
 static SDL_GPUResourceHandle D3D12_ResolveBuffer(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUBuffer *buffer)
 {
-    return 0; // TODO Implement bindless
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12BufferContainer *container = (D3D12BufferContainer *)buffer;
+    D3D12Buffer *activeBuffer = container->activeBuffer;
+
+    D3D12_INTERNAL_TrackBuffer(d3d12CommandBuffer, activeBuffer);
+
+    return ((Uint64)1 << 32) | activeBuffer->bindlessSlot;
 }
 
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
@@ -10120,6 +10242,23 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
     result->shader_formats = shaderFormats;
     result->debug_mode = debugMode;
     renderer->sdlGPUDevice = result;
+
+    renderer->bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
+    if (renderer->bindless) {
+        SDL_SetAtomicU32(&renderer->bindlessSamplerCount, 0);
+        SDL_SetAtomicU32(&renderer->bindlessResourceCount, 0);
+        renderer->bindlessDescriptorHeapWrite = SDL_CreateMutex();
+
+        renderer->bindlessSamplerCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
+        renderer->bindlessResourceCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
+
+        renderer->bindlessDescriptorHeapSamplers = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, renderer->bindlessSamplerCapacity, false);
+        renderer->bindlessDescriptorHeapResources = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResourceCapacity * 3, false);
+
+        if (renderer->bindlessDescriptorHeapSamplers == NULL || renderer->bindlessDescriptorHeapResources == NULL) {
+            return NULL; // TODO cleanup
+        }
+    }
 
     return result;
 }
