@@ -4646,62 +4646,31 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 
 #endif /* SDL_PLATFORM_GDK */
 
-#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_BOOLEAN                "SDL.gpu.device.create.feature.bindlessresources"
-#define SDL_PROP_GPU_RESOURCE_SET_CREATE_NAME_STRING                 "SDL.gpu.resourceset.create.name"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN          "SDL.gpu.device.create.feature.bindless"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER  "SDL.gpu.device.create.feature.bindless.samplers"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER "SDL.gpu.device.create.feature.bindless.resources"
 
-typedef struct SDL_GPUResourceSet SDL_GPUResourceSet;
-typedef Uint64 SDL_GPUResourceID;
+#ifndef SDL_GPU_DEFAULT_BINDLESS_SAMPLERS
+#define SDL_GPU_DEFAULT_BINDLESS_SAMPLERS 16
+#endif
 
-typedef struct SDL_GPUResourceSetCreateInfo
-{
-    Uint32 num_samplers;     /**< The number of samplers in the resource set. */
-    Uint32 num_resources;    /**< The number of resources in the resource set. */
+#ifndef SDL_GPU_DEFAULT_BINDLESS_RESOURCES
+#define SDL_GPU_DEFAULT_BINDLESS_RESOURCES 16384
+#endif
 
-    SDL_PropertiesID props;  /**< A properties ID for extensions. Should be 0 if no extensions are needed. */
-} SDL_GPUResourceSetCreateInfo;
+typedef Uint64 SDL_GPUResourceHandle;
 
-extern SDL_DECLSPEC SDL_GPUResourceSet * SDLCALL SDL_CreateGPUResourceSet(
-    SDL_GPUDevice *device,
-    const SDL_GPUResourceSetCreateInfo *createinfo);
-
-extern SDL_DECLSPEC void SDLCALL SDL_ReleaseGPUResourceSet(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set);
-
-extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceSampler(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUSampler(
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUSampler *sampler);
 
-extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceTexture(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUTexture(
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUTexture *texture);
 
-extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceStorageTexture(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUTexture *texture);
-
-extern SDL_DECLSPEC SDL_GPUResourceID SDLCALL SDL_AllocateGPUResourceStorageBuffer(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUBuffer(
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUBuffer *buffer);
-
-extern SDL_DECLSPEC void SDLCALL SDL_ReleaseGPUResource(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource);
-
-extern SDL_DECLSPEC void SDLCALL SDL_BindGPUResourceSet(
-    SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceSet *resource_set);
-
-extern SDL_DECLSPEC bool SDLCALL SDL_ResolveGPUResource(
-    SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource,
-    Uint32 *slot);
 
 #ifdef __cplusplus
 }

@@ -3632,107 +3632,29 @@ XrResult SDL_CreateGPUXRSwapchain(
     return device->CreateXRSwapchain(device->driverData, session, createinfo, format, swapchain, textures);
 }
 
-SDL_GPUResourceSet *SDL_CreateGPUResourceSet(
-    SDL_GPUDevice *device,
-    const SDL_GPUResourceSetCreateInfo *createinfo)
-{
-    CHECK_DEVICE_MAGIC(device, NULL);
-
-    CHECK_PARAM(createinfo == NULL) {
-        SDL_InvalidParamError("createinfo");
-        return NULL;
-    }
-
-    // if (!device->bindlessResources) {
-    //     SDL_SetError("Driver does not support bindless resources");
-    //     return NULL;
-    // }
-
-    return device->CreateResourceSet(
-        device->driverData,
-        createinfo);
-}
-
-void SDL_BindGPUResourceSet(
+SDL_GPUResourceHandle SDL_ResolveGPUSampler(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceSet *resource_set)
-{
-    COMMAND_BUFFER_DEVICE->BindResourceSet(command_buffer, resource_set);
-}
-
-void SDL_ReleaseGPUResourceSet(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set)
-{
-    device->ReleaseResourceSet(
-        device->driverData,
-        resource_set);
-}
-
-SDL_GPUResourceID SDL_AllocateGPUResourceSampler(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
     SDL_GPUSampler *sampler)
 {
-    return device->AllocateResourceSampler(
-        device->driverData,
-        resource_set,
+    return COMMAND_BUFFER_DEVICE->ResolveSampler(
+        command_buffer,
         sampler);
 }
 
-SDL_GPUResourceID SDL_AllocateGPUResourceTexture(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
+SDL_GPUResourceHandle SDL_ResolveGPUTexture(
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUTexture *texture)
 {
-    return device->AllocateResourceTexture(
-        device->driverData,
-        resource_set,
+    return COMMAND_BUFFER_DEVICE->ResolveTexture(
+        command_buffer,
         texture);
 }
 
-SDL_GPUResourceID SDL_AllocateGPUResourceStorageTexture(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUTexture *texture)
-{
-    return device->AllocateResourceStorageTexture(
-        device->driverData,
-        resource_set,
-        texture);
-}
-
-SDL_GPUResourceID SDL_AllocateGPUResourceStorageBuffer(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
+SDL_GPUResourceHandle SDL_ResolveGPUBuffer(
+    SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUBuffer *buffer)
 {
-    return device->AllocateResourceStorageBuffer(
-        device->driverData,
-        resource_set,
-        buffer);
-}
-
-bool SDL_ResolveGPUResource(
-    SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource,
-    Uint32 *slot)
-{
-    return COMMAND_BUFFER_DEVICE->ResolveResource(
+    return COMMAND_BUFFER_DEVICE->ResolveBuffer(
         command_buffer,
-        resource_set,
-        resource,
-        slot);
-}
-
-void SDL_ReleaseGPUResource(
-    SDL_GPUDevice *device,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource)
-{
-    device->ReleaseResource(
-        device->driverData,
-        resource_set,
-        resource);
+        buffer);
 }

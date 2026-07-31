@@ -4552,73 +4552,25 @@ static XrResult METAL_CreateXRSession(
     return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
 
-static SDL_GPUResourceSet *METAL_CreateResourceSet(
-    SDL_GPURenderer *driverData,
-    const SDL_GPUResourceSetCreateInfo *createinfo)
-{
-    return NULL; // TODO Implement
-}
-
-static void METAL_BindResourceSet(
+static SDL_GPUResourceHandle METAL_ResolveSampler(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUResourceSet *resourceSet)
-{
-}
-
-static void METAL_ReleaseResourceSet(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resourceSet)
-{
-    // TODO Implement
-}
-
-static SDL_GPUResourceID METAL_AllocateResourceSampler(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resource_set,
     SDL_GPUSampler *sampler)
 {
-    return 0; // TODO Implement
+    return 0; // TODO Implement bindless
 }
 
-static SDL_GPUResourceID METAL_AllocateResourceTexture(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resource_set,
+static SDL_GPUResourceHandle METAL_ResolveTexture(
+    SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUTexture *texture)
 {
-    return 0; // TODO Implement
+    return 0; // TODO Implement bindless
 }
 
-static SDL_GPUResourceID METAL_AllocateResourceStorageTexture(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUTexture *texture)
-{
-    return 0; // TODO Implement
-}
-
-static SDL_GPUResourceID METAL_AllocateResourceStorageBuffer(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resource_set,
+static SDL_GPUResourceHandle METAL_ResolveBuffer(
+    SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUBuffer *buffer)
 {
-    return 0; // TODO Implement
-}
-
-static void METAL_ReleaseResource(
-    SDL_GPURenderer *driverData,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource)
-{
-    // TODO Implement
-}
-
-static bool METAL_ResolveResource(
-    SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUResourceSet *resource_set,
-    SDL_GPUResourceID resource,
-    Uint32 *slot)
-{
-    return false; // TODO Implement
+    return 0; // TODO Implement bindless
 }
 
 static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
