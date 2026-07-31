@@ -6071,59 +6071,80 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
             &nameInfo);
     }
 
-    if (renderer->bindless && texture->fullView != VK_NULL_HANDLE) {
-        bool sampled = (texture->usage & SDL_GPU_TEXTUREUSAGE_SAMPLER) != 0;
-        bool storage = (texture->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ) != 0;
+    if (renderer->bindless) {
+        VkImageView readImageView = VK_NULL_HANDLE;
+        VkImageLayout readImageLayout;
+        VkImageView writeImageView = VK_NULL_HANDLE;
+        VkImageLayout writeImageLayout;
 
-        texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
-
-        VkDescriptorImageInfo imageInfo[2];
-        imageInfo[0].sampler = VK_NULL_HANDLE;
-        imageInfo[0].imageView = texture->fullView;
-        imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfo[1].sampler = VK_NULL_HANDLE;
-        imageInfo[1].imageView = texture->fullView;
-        imageInfo[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkWriteDescriptorSet writeDescriptorSets[2];
-        Uint32 descriptorSetCount = 0;
-
-        if (sampled) {
-            writeDescriptorSets[descriptorSetCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writeDescriptorSets[descriptorSetCount].pNext = NULL;
-            writeDescriptorSets[descriptorSetCount].dstSet = renderer->bindlessDescriptorSet;
-            writeDescriptorSets[descriptorSetCount].dstBinding = 1;
-            writeDescriptorSets[descriptorSetCount].dstArrayElement = texture->bindlessSlot;
-            writeDescriptorSets[descriptorSetCount].descriptorCount = 1;
-            writeDescriptorSets[descriptorSetCount].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            writeDescriptorSets[descriptorSetCount].pImageInfo = &imageInfo[0];
-            writeDescriptorSets[descriptorSetCount].pBufferInfo = NULL;
-            writeDescriptorSets[descriptorSetCount].pTexelBufferView = NULL;
-            descriptorSetCount++;
+        if ((texture->usage & SDL_GPU_TEXTUREUSAGE_SAMPLER) != 0) {
+            readImageView = texture->fullView;
+            readImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        } else if ((texture->usage & (SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ)) != 0) {
+            readImageView = texture->fullView;
+            readImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+        
+        if ((texture->usage & (SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) != 0) {
+            writeImageView = texture->subresources->computeWriteView;
+            writeImageLayout = VK_IMAGE_LAYOUT_GENERAL;
         }
 
-        if (storage) {
-            writeDescriptorSets[descriptorSetCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writeDescriptorSets[descriptorSetCount].pNext = NULL;
-            writeDescriptorSets[descriptorSetCount].dstSet = renderer->bindlessDescriptorSet;
-            writeDescriptorSets[descriptorSetCount].dstBinding = 2;
-            writeDescriptorSets[descriptorSetCount].dstArrayElement = texture->bindlessSlot;
-            writeDescriptorSets[descriptorSetCount].descriptorCount = 1;
-            writeDescriptorSets[descriptorSetCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writeDescriptorSets[descriptorSetCount].pImageInfo = &imageInfo[1];
-            writeDescriptorSets[descriptorSetCount].pBufferInfo = NULL;
-            writeDescriptorSets[descriptorSetCount].pTexelBufferView = NULL;
-            descriptorSetCount++;
-        }
+        if (readImageView != VK_NULL_HANDLE || writeImageView != VK_NULL_HANDLE) {
+            texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
 
-        SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
-        renderer->vkUpdateDescriptorSets(
-            renderer->logicalDevice,
-            descriptorSetCount,
-            writeDescriptorSets,
-            0,
-            NULL);
-        SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
+            Uint32 descriptorWriteCount = 0;
+
+            VkDescriptorImageInfo imageInfo[2];
+            VkWriteDescriptorSet writeDescriptorSets[2];
+
+            if (readImageView != VK_NULL_HANDLE) {
+                imageInfo[descriptorWriteCount].sampler = VK_NULL_HANDLE;
+                imageInfo[descriptorWriteCount].imageView = readImageView;
+                imageInfo[descriptorWriteCount].imageLayout = readImageLayout;
+                
+                writeDescriptorSets[descriptorWriteCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writeDescriptorSets[descriptorWriteCount].pNext = NULL;
+                writeDescriptorSets[descriptorWriteCount].dstSet = renderer->bindlessDescriptorSet;
+                writeDescriptorSets[descriptorWriteCount].dstBinding = 1;
+                writeDescriptorSets[descriptorWriteCount].dstArrayElement = texture->bindlessSlot;
+                writeDescriptorSets[descriptorWriteCount].descriptorCount = 1;
+                writeDescriptorSets[descriptorWriteCount].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                writeDescriptorSets[descriptorWriteCount].pImageInfo = &imageInfo[descriptorWriteCount];
+                writeDescriptorSets[descriptorWriteCount].pBufferInfo = NULL;
+                writeDescriptorSets[descriptorWriteCount].pTexelBufferView = NULL;
+
+                descriptorWriteCount++;
+            }
+
+            if (writeImageView != VK_NULL_HANDLE) {
+                imageInfo[descriptorWriteCount].sampler = VK_NULL_HANDLE;
+                imageInfo[descriptorWriteCount].imageView = writeImageView;
+                imageInfo[descriptorWriteCount].imageLayout = writeImageLayout;
+                
+                writeDescriptorSets[descriptorWriteCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writeDescriptorSets[descriptorWriteCount].pNext = NULL;
+                writeDescriptorSets[descriptorWriteCount].dstSet = renderer->bindlessDescriptorSet;
+                writeDescriptorSets[descriptorWriteCount].dstBinding = 2;
+                writeDescriptorSets[descriptorWriteCount].dstArrayElement = texture->bindlessSlot;
+                writeDescriptorSets[descriptorWriteCount].descriptorCount = 1;
+                writeDescriptorSets[descriptorWriteCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writeDescriptorSets[descriptorWriteCount].pImageInfo = &imageInfo[descriptorWriteCount];
+                writeDescriptorSets[descriptorWriteCount].pBufferInfo = NULL;
+                writeDescriptorSets[descriptorWriteCount].pTexelBufferView = NULL;
+
+                descriptorWriteCount++;
+            }
+
+            SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
+            renderer->vkUpdateDescriptorSets(
+                renderer->logicalDevice,
+                descriptorWriteCount,
+                writeDescriptorSets,
+                0,
+                NULL);
+            SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
+        }
     }
 
     return texture;
