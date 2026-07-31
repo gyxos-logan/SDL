@@ -6071,42 +6071,55 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
             &nameInfo);
     }
 
-    if (renderer->bindless) {
+    if (renderer->bindless && texture->fullView != VK_NULL_HANDLE) {
+        bool sampled = (texture->usage & SDL_GPU_TEXTUREUSAGE_SAMPLER) != 0;
+        bool storage = (texture->usage & SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ) != 0;
+
         texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
 
-        VkDescriptorImageInfo imageInfo;
-        imageInfo.sampler = VK_NULL_HANDLE;
-        imageInfo.imageView = texture->fullView;
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo imageInfo[2];
+        imageInfo[0].sampler = VK_NULL_HANDLE;
+        imageInfo[0].imageView = texture->fullView;
+        imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo[1].sampler = VK_NULL_HANDLE;
+        imageInfo[1].imageView = texture->fullView;
+        imageInfo[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet writeDescriptorSets[2];
+        Uint32 descriptorSetCount = 0;
 
-        writeDescriptorSets[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptorSets[0].pNext = NULL;
-        writeDescriptorSets[0].dstSet = renderer->bindlessDescriptorSet;
-        writeDescriptorSets[0].dstBinding = 1;
-        writeDescriptorSets[0].dstArrayElement = texture->bindlessSlot;
-        writeDescriptorSets[0].descriptorCount = 1;
-        writeDescriptorSets[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        writeDescriptorSets[0].pImageInfo = &imageInfo;
-        writeDescriptorSets[0].pBufferInfo = NULL;
-        writeDescriptorSets[0].pTexelBufferView = NULL;
+        if (sampled) {
+            writeDescriptorSets[descriptorSetCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDescriptorSets[descriptorSetCount].pNext = NULL;
+            writeDescriptorSets[descriptorSetCount].dstSet = renderer->bindlessDescriptorSet;
+            writeDescriptorSets[descriptorSetCount].dstBinding = 1;
+            writeDescriptorSets[descriptorSetCount].dstArrayElement = texture->bindlessSlot;
+            writeDescriptorSets[descriptorSetCount].descriptorCount = 1;
+            writeDescriptorSets[descriptorSetCount].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writeDescriptorSets[descriptorSetCount].pImageInfo = &imageInfo[0];
+            writeDescriptorSets[descriptorSetCount].pBufferInfo = NULL;
+            writeDescriptorSets[descriptorSetCount].pTexelBufferView = NULL;
+            descriptorSetCount++;
+        }
 
-        writeDescriptorSets[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptorSets[1].pNext = NULL;
-        writeDescriptorSets[1].dstSet = renderer->bindlessDescriptorSet;
-        writeDescriptorSets[1].dstBinding = 2;
-        writeDescriptorSets[1].dstArrayElement = texture->bindlessSlot;
-        writeDescriptorSets[1].descriptorCount = 1;
-        writeDescriptorSets[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writeDescriptorSets[1].pImageInfo = &imageInfo;
-        writeDescriptorSets[1].pBufferInfo = NULL;
-        writeDescriptorSets[1].pTexelBufferView = NULL;
+        if (storage) {
+            writeDescriptorSets[descriptorSetCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writeDescriptorSets[descriptorSetCount].pNext = NULL;
+            writeDescriptorSets[descriptorSetCount].dstSet = renderer->bindlessDescriptorSet;
+            writeDescriptorSets[descriptorSetCount].dstBinding = 2;
+            writeDescriptorSets[descriptorSetCount].dstArrayElement = texture->bindlessSlot;
+            writeDescriptorSets[descriptorSetCount].descriptorCount = 1;
+            writeDescriptorSets[descriptorSetCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writeDescriptorSets[descriptorSetCount].pImageInfo = &imageInfo[1];
+            writeDescriptorSets[descriptorSetCount].pBufferInfo = NULL;
+            writeDescriptorSets[descriptorSetCount].pTexelBufferView = NULL;
+            descriptorSetCount++;
+        }
 
         SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
         renderer->vkUpdateDescriptorSets(
             renderer->logicalDevice,
-            2,
+            descriptorSetCount,
             writeDescriptorSets,
             0,
             NULL);
@@ -12991,6 +13004,11 @@ static bool VULKAN_INTERNAL_PrepareVulkan(
         features->usesCustomVulkanOptions = true;
         features->desiredApiVersion = SDL_max(features->desiredApiVersion, VK_API_VERSION_1_2);
 
+        features->desiredVulkan11DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        features->desiredVulkan12DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        features->desiredVulkan13DeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
+        features->desiredVulkan11DeviceFeatures.shaderDrawParameters = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.runtimeDescriptorArray = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorIndexing = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorBindingPartiallyBound = VK_TRUE;
