@@ -4660,14 +4660,41 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 
 typedef Uint64 SDL_GPUResourceHandle;
 
+/**
+ * Resolves a sampler to a handle.
+ *
+ * \param command_buffer a command buffer.
+ * \param sampler a sampler to be resolved.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
 extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUSampler(
     SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUSampler *sampler);
 
+/**
+ * Resolves a texture to a handle.
+ *
+ * \param command_buffer a command buffer.
+ * \param texture a texture to be resolved.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
 extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUTexture(
     SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUTexture *texture);
 
+/**
+ * Resolves a buffer to a handle.
+ *
+ * \param command_buffer a command buffer.
+ * \param buffer a buffer to be resolved.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
 extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUBuffer(
     SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUBuffer *buffer);

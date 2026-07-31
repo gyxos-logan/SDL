@@ -1337,7 +1337,6 @@ SDL_DYNAPI_PROC(SDL_FormFactor,SDL_GetDeviceFormFactor,(void),(),return)
 SDL_DYNAPI_PROC(const char*,SDL_GetDeviceFormFactorName,(SDL_FormFactor a),(a),return)
 SDL_DYNAPI_PROC(bool,SDL_IsUbuntuTouch,(void),(),return)
 SDL_DYNAPI_PROC(int,SDL_GetNumProperties,(SDL_PropertiesID a),(a),return)
-// TODO: Run gendynapi.py
 SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_ResolveGPUSampler,(SDL_GPUCommandBuffer *a,SDL_GPUSampler *b),(a,b),return)
 SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_ResolveGPUTexture,(SDL_GPUCommandBuffer *a,SDL_GPUTexture *b),(a,b),return)
 SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_ResolveGPUBuffer,(SDL_GPUCommandBuffer *a,SDL_GPUBuffer *b),(a,b),return)

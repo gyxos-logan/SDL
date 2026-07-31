@@ -1329,7 +1329,6 @@
 #define SDL_GetDeviceFormFactorName SDL_GetDeviceFormFactorName_REAL
 #define SDL_IsUbuntuTouch SDL_IsUbuntuTouch_REAL
 #define SDL_GetNumProperties SDL_GetNumProperties_REAL
-// TODO: Run gendynapi.py
 #define SDL_ResolveGPUSampler SDL_ResolveGPUSampler_REAL
 #define SDL_ResolveGPUTexture SDL_ResolveGPUTexture_REAL
 #define SDL_ResolveGPUBuffer SDL_ResolveGPUBuffer_REAL
