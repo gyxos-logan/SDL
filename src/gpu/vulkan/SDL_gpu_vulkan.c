@@ -14014,39 +14014,61 @@ static SDL_GPUResourceHandle VULKAN_ResolveBuffer(
 
 static bool VULKAN_INTERNAL_CreateBindlessDescriptorSetLayout(VulkanRenderer *renderer)
 {
-    // VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    // VkDescriptorSetLayoutBinding descriptorSetLayoutBinding;
+    VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBinding[4];
 
-    // descriptorSetLayoutBinding.binding = 0;
-    // descriptorSetLayoutBinding.descriptorCount = 65536; // TODO: Detect the maximum number supported by the device
-    // descriptorSetLayoutBinding.descriptorType = descriptorType;
-    // descriptorSetLayoutBinding.stageFlags = shaderStage;
-    // descriptorSetLayoutBinding.pImmutableSamplers = NULL;
+    descriptorSetLayoutBinding[0].binding = 0;
+    descriptorSetLayoutBinding[0].descriptorCount = renderer->bindlessSamplerCapacity;
+    descriptorSetLayoutBinding[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    descriptorSetLayoutBinding[0].stageFlags = shaderStage;
+    descriptorSetLayoutBinding[0].pImmutableSamplers = NULL;
 
-    // VkDescriptorBindingFlags descriptorBindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+    descriptorSetLayoutBinding[1].binding = 1;
+    descriptorSetLayoutBinding[1].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    descriptorSetLayoutBinding[1].stageFlags = shaderStage;
+    descriptorSetLayoutBinding[1].pImmutableSamplers = NULL;
 
-    // VkDescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo;
-    // descriptorSetLayoutBindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    // descriptorSetLayoutBindingFlagsCreateInfo.pNext = NULL;
-    // descriptorSetLayoutBindingFlagsCreateInfo.bindingCount = 1;
-    // descriptorSetLayoutBindingFlagsCreateInfo.pBindingFlags = &descriptorBindingFlags;
+    descriptorSetLayoutBinding[2].binding = 2;
+    descriptorSetLayoutBinding[2].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    descriptorSetLayoutBinding[2].stageFlags = shaderStage;
+    descriptorSetLayoutBinding[2].pImmutableSamplers = NULL;
 
-    // VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
-    // descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    // descriptorSetLayoutCreateInfo.pNext = &descriptorSetLayoutBindingFlagsCreateInfo;
-    // descriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-    // descriptorSetLayoutCreateInfo.bindingCount = 1;
-    // descriptorSetLayoutCreateInfo.pBindings = &descriptorSetLayoutBinding;
+    descriptorSetLayoutBinding[3].binding = 3;
+    descriptorSetLayoutBinding[3].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBinding[3].stageFlags = shaderStage;
+    descriptorSetLayoutBinding[3].pImmutableSamplers = NULL;
 
-    // VkResult vulkanResult = renderer->vkCreateDescriptorSetLayout(
-    //     renderer->logicalDevice,
-    //     &descriptorSetLayoutCreateInfo,
-    //     NULL,
-    //     descriptorSetLayout);
+    VkDescriptorBindingFlags descriptorBindingFlags[4];
+    descriptorBindingFlags[0] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    descriptorBindingFlags[1] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    descriptorBindingFlags[2] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    descriptorBindingFlags[3] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
 
-    // if (vulkanResult != VK_SUCCESS) {
-    //     CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorSetLayout, false);
-    // }
+    VkDescriptorSetLayoutBindingFlagsCreateInfo descriptorSetLayoutBindingFlagsCreateInfo;
+    descriptorSetLayoutBindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    descriptorSetLayoutBindingFlagsCreateInfo.pNext = NULL;
+    descriptorSetLayoutBindingFlagsCreateInfo.bindingCount = 4;
+    descriptorSetLayoutBindingFlagsCreateInfo.pBindingFlags = descriptorBindingFlags;
+
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo;
+    descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutCreateInfo.pNext = &descriptorSetLayoutBindingFlagsCreateInfo;
+    descriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    descriptorSetLayoutCreateInfo.bindingCount = 4;
+    descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBinding;
+
+    VkResult vulkanResult = renderer->vkCreateDescriptorSetLayout(
+        renderer->logicalDevice,
+        &descriptorSetLayoutCreateInfo,
+        NULL,
+        &renderer->bindlessDescriptorSetLayout);
+
+    if (vulkanResult != VK_SUCCESS) {
+        CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, vkCreateDescriptorSetLayout, false);
+    }
 
     return true;
 }
