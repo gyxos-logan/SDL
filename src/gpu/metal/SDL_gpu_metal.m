@@ -693,6 +693,8 @@ struct MetalRenderer
     SDL_Mutex *disposeLock;
     SDL_Mutex *fenceLock;
     SDL_Mutex *windowLock;
+
+    bool bindless;
 };
 
 // Helper Functions
@@ -1370,6 +1372,10 @@ static SDL_GPUSampler *METAL_CreateSampler(
         MTLSamplerDescriptor *samplerDesc = [MTLSamplerDescriptor new];
         id<MTLSamplerState> sampler;
         MetalSampler *metalSampler;
+
+        if (renderer->bindless) {
+            samplerDesc.supportArgumentBuffers = true;
+        }
 
         samplerDesc.sAddressMode = SDLToMetal_SamplerAddressMode[createinfo->address_mode_u];
         samplerDesc.tAddressMode = SDLToMetal_SamplerAddressMode[createinfo->address_mode_v];
@@ -4356,6 +4362,14 @@ static bool METAL_PrepareDriver(SDL_VideoDevice *this, SDL_PropertiesID props)
         return false;
     }
 
+    bool bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
+
+    if (bindless) {
+        if (!@available(macOS 13.0, *)) {
+            return false;
+        }
+    }
+
     if (@available(macOS 10.14, iOS 13.0, tvOS 13.0, *)) {
         return (this->Metal_CreateView != NULL);
     }
@@ -4556,21 +4570,45 @@ static SDL_GPUResourceHandle METAL_ResolveSampler(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUSampler *sampler)
 {
-    return 0; // TODO Implement bindless
+    MetalSampler *metalSampler = (MetalSampler *)sampler;
+
+    return metalSampler->handle.gpuResourceID._impl;
 }
 
 static SDL_GPUResourceHandle METAL_ResolveTexture(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUTexture *texture)
 {
-    return 0; // TODO Implement bindless
+    MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+    MetalTextureContainer *container = (MetalTextureContainer *)texture;
+    MetalTexture *metalTexture = container->activeTexture;
+
+    [metalCommandBuffer->renderEncoder
+        useResource: metalTexture->handle
+        usage: MTLResourceUsageRead
+        stages: MTLRenderStageVertex | MTLRenderStageFragment];
+
+    METAL_INTERNAL_TrackTexture(metalCommandBuffer, metalTexture);
+
+    return metalTexture->handle.gpuResourceID._impl;
 }
 
 static SDL_GPUResourceHandle METAL_ResolveBuffer(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUBuffer *buffer)
 {
-    return 0; // TODO Implement bindless
+    MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+    MetalBufferContainer *container = (MetalBufferContainer *)buffer;
+    MetalBuffer *metalbuffer = container->activeBuffer;
+
+    [metalCommandBuffer->renderEncoder
+        useResource: metalbuffer->handle
+        usage: MTLResourceUsageRead
+        stages: MTLRenderStageVertex | MTLRenderStageFragment];
+
+    METAL_INTERNAL_TrackBuffer(metalCommandBuffer, metalbuffer);
+
+    return metalbuffer->handle.gpuAddress;
 }
 
 static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
@@ -4729,6 +4767,8 @@ static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SD
         result->driverData = (SDL_GPURenderer *)renderer;
         result->shader_formats = SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_METALLIB;
         renderer->sdlGPUDevice = result;
+
+        renderer->bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
 
         return result;
     }
