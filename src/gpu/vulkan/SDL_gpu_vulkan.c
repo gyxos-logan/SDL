@@ -479,62 +479,62 @@ typedef struct VulkanUniformBuffer VulkanUniformBuffer;
 typedef struct VulkanTexture VulkanTexture;
 typedef struct VulkanTextureContainer VulkanTextureContainer;
 
-typedef struct VulkanResourceSet VulkanResourceSet;
-typedef struct VulkanResourceContainer VulkanResourceContainer;
-typedef struct VulkanResource VulkanResource;
-typedef struct VulkanResourceSlot VulkanResourceSlot;
-typedef struct VulkanResourceSetSubresources VulkanResourceSetSubresources;
+// typedef struct VulkanResourceSet VulkanResourceSet;
+// typedef struct VulkanResourceContainer VulkanResourceContainer;
+// typedef struct VulkanResource VulkanResource;
+// typedef struct VulkanResourceSlot VulkanResourceSlot;
+// typedef struct VulkanResourceSetSubresources VulkanResourceSetSubresources;
 
-struct VulkanResourceSetSubresources
-{
-    SDL_Mutex *lock;
+// struct VulkanResourceSetSubresources
+// {
+//     SDL_Mutex *lock;
 
-    VulkanResourceContainer *containers;
-    SDL_AtomicU32 containerCount;
-    Uint32 containerCapacity;
+//     VulkanResourceContainer *containers;
+//     SDL_AtomicU32 containerCount;
+//     Uint32 containerCapacity;
 
-    Uint32 *releasedContainers;
-    Uint32 releasedContainerCount;
-    Uint32 releasedContainerCapacity;
+//     Uint32 *releasedContainers;
+//     Uint32 releasedContainerCount;
+//     Uint32 releasedContainerCapacity;
 
-    Uint32 slotCount;
+//     Uint32 slotCount;
 
-    Uint32 *releasedSlots;
-    Uint32 releasedSlotCount;
-    Uint32 releasedSlotCapacity;
+//     Uint32 *releasedSlots;
+//     Uint32 releasedSlotCount;
+//     Uint32 releasedSlotCapacity;
 
-    SDL_AtomicInt *referenceCounts;
-};
+//     SDL_AtomicInt *referenceCounts;
+// };
 
-struct VulkanResourceSet
-{
-    SDL_GPUResourceSetCreateInfo info;
+// struct VulkanResourceSet
+// {
+//     SDL_GPUResourceSetCreateInfo info;
 
-    VulkanResourceSetSubresources samplers;
-    VulkanResourceSetSubresources resources;
+//     VulkanResourceSetSubresources samplers;
+//     VulkanResourceSetSubresources resources;
 
-    char *debugName;
+//     char *debugName;
 
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSet descriptorSets[4];
+//     VkDescriptorPool descriptorPool;
+//     VkDescriptorSet descriptorSets[4];
 
-    bool markedForDestroy; // so that defrag doesn't double-free
-    SDL_AtomicInt referenceCount;
-};
+//     bool markedForDestroy; // so that defrag doesn't double-free
+//     SDL_AtomicInt referenceCount;
+// };
 
-struct VulkanResourceContainer
-{
-    SDL_AtomicU32 version;
-    VkDescriptorType type;
+// struct VulkanResourceContainer
+// {
+//     SDL_AtomicU32 version;
+//     VkDescriptorType type;
 
-    void* backingContainer;
+//     void* backingContainer;
 
-    VulkanResource *activeResource;
+//     VulkanResource *activeResource;
 
-    VulkanResource *resources;
-    Uint32 resourceCapacity;
-    Uint32 resourceCount;
-};
+//     VulkanResource *resources;
+//     Uint32 resourceCapacity;
+//     Uint32 resourceCount;
+// };
 
 typedef struct VulkanFenceHandle
 {
@@ -1180,16 +1180,6 @@ typedef struct VulkanCommandBuffer
 
     bool swapchainRequested;
     bool isDefrag; // Whether this CB was created for defragging
-
-    VulkanResourceSet *resourceSet;
-
-    VulkanResourceSet **usedResourceSets;
-    Sint32 usedResourceSetCount;
-    Sint32 usedResourceSetCapacity;
-
-    SDL_AtomicInt **usedResourceSlots;
-    Sint32 usedResourceSlotCount;
-    Sint32 usedResourceSlotCapacity;
 } VulkanCommandBuffer;
 
 struct VulkanCommandPool
@@ -1322,10 +1312,6 @@ struct VulkanRenderer
     Uint32 framebuffersToDestroyCount;
     Uint32 framebuffersToDestroyCapacity;
 
-    VulkanResourceSet **resourceSetsToDestroy;
-    Uint32 resourceSetsToDestroyCount;
-    Uint32 resourceSetsToDestroyCapacity;
-
     SDL_Mutex *allocatorLock;
     SDL_Mutex *disposeLock;
     SDL_Mutex *submitLock;
@@ -1357,7 +1343,7 @@ struct VulkanRenderer
 
     bool bindless;
     Uint32 bindlessSamplerCapacity;
-    Uint32 bindlessTextureCapacity;
+    Uint32 bindlessResourceCapacity;
 
     VkDescriptorSetLayout bindlessDescriptorSetLayout;
     VkDescriptorPool bindlessDescriptorPool;
@@ -2677,33 +2663,6 @@ static void VULKAN_INTERNAL_TrackUniformBuffer(
         uniformBuffer->buffer);
 }
 
-static void VULKAN_INTERNAL_TrackResourceSet(
-    VulkanCommandBuffer *commandBuffer,
-    VulkanResourceSet *resourceSet)
-{
-    TRACK_RESOURCE(
-        resourceSet,
-        VulkanResourceSet *,
-        usedResourceSets,
-        usedResourceSetCount,
-        usedResourceSetCapacity,
-        resourceSet->referenceCount);
-}
-
-static void VULKAN_INTERNAL_TrackResourceSlot(
-    VulkanCommandBuffer *commandBuffer,
-    VulkanResourceSetSubresources *subresources,
-    Uint32 slot)
-{
-    TRACK_RESOURCE(
-        &subresources->referenceCounts[slot],
-        SDL_AtomicU32 *,
-        usedResourceSlots,
-        usedResourceSlotCount,
-        usedResourceSlotCapacity,
-        subresources->referenceCounts[slot]);
-}
-
 #undef TRACK_RESOURCE
 
 // Memory Barriers
@@ -3178,31 +3137,6 @@ static void VULKAN_INTERNAL_DestroyFramebuffer(
     SDL_free(framebuffer);
 }
 
-static void VULKAN_INTERNAL_DestroyResourceSet(
-    VulkanRenderer *renderer,
-    VulkanResourceSet *resourceSet)
-{
-    // Uint32 i;
-
-    renderer->vkDestroyDescriptorPool(renderer->logicalDevice, resourceSet->descriptorPool, NULL);
-
-    // Uint32 resourceCount = SDL_GetAtomicU32(&resourceSet->resourceCount);
-
-    // for (i = 0; i < resourceCount; i += 1) {
-    //     SDL_free(resourceSet->resources[i].resources);
-    // }
-
-    // SDL_DestroyProperties(resourceSet->info.props);
-
-    // // Containers are just client handles, so we can destroy immediately
-    // SDL_free(resourceSet->debugName);
-    // SDL_free(resourceSet->resources);
-    // SDL_free(resourceSet->slotReferenceCounts);
-    // SDL_free(resourceSet->releasedSlots);
-    // SDL_free(resourceSet);
-
-}
-
 typedef struct CheckOneFramebufferForRemovalData
 {
     Uint32 keysToRemoveCapacity;
@@ -3382,8 +3316,6 @@ static void VULKAN_INTERNAL_DestroyCommandPool(
         SDL_free(commandBuffer->usedComputePipelines);
         SDL_free(commandBuffer->usedFramebuffers);
         SDL_free(commandBuffer->usedUniformBuffers);
-        SDL_free(commandBuffer->usedResourceSets);
-        SDL_free(commandBuffer->usedResourceSlots);
 
         SDL_free(commandBuffer);
     }
@@ -5238,7 +5170,6 @@ static void VULKAN_DestroyDevice(
     SDL_free(renderer->shadersToDestroy);
     SDL_free(renderer->samplersToDestroy);
     SDL_free(renderer->framebuffersToDestroy);
-    SDL_free(renderer->resourceSetsToDestroy);
     SDL_free(renderer->allocationsToDefrag);
 
     SDL_DestroyMutex(renderer->allocatorLock);
@@ -5654,17 +5585,17 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
         dynamicOffsetCount,
         dynamicOffsets);
     
-    if (commandBuffer->resourceSet != NULL) {
-        renderer->vkCmdBindDescriptorSets(
-        commandBuffer->commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        resourceLayout->pipelineLayout,
-        4,
-        4,
-        commandBuffer->resourceSet->descriptorSets,
-        0,
-        NULL);
-    }
+    // if (commandBuffer->resourceSet != NULL) {
+    //     renderer->vkCmdBindDescriptorSets(
+    //     commandBuffer->commandBuffer,
+    //     VK_PIPELINE_BIND_POINT_GRAPHICS,
+    //     resourceLayout->pipelineLayout,
+    //     4,
+    //     4,
+    //     commandBuffer->resourceSet->descriptorSets,
+    //     0,
+    //     NULL);
+    // }
 
     commandBuffer->needNewVertexUniformOffsets = false;
     commandBuffer->needNewFragmentUniformOffsets = false;
@@ -9769,19 +9700,7 @@ static bool VULKAN_INTERNAL_AllocateCommandBuffer(
     commandBuffer->usedUniformBuffers = SDL_malloc(
         commandBuffer->usedUniformBufferCapacity * sizeof(VulkanUniformBuffer *));
 
-    commandBuffer->usedResourceSetCapacity = 4;
-    commandBuffer->usedResourceSetCount = 0;
-    commandBuffer->usedResourceSets = SDL_malloc(
-        commandBuffer->usedResourceSetCapacity * sizeof(VulkanResourceSet *));
-
-    commandBuffer->usedResourceSlotCapacity = 4;
-    commandBuffer->usedResourceSlotCount = 0;
-    commandBuffer->usedResourceSlots = SDL_malloc(
-        commandBuffer->usedResourceSlotCapacity * sizeof(SDL_AtomicInt *));
-
     commandBuffer->swapchainRequested = false;
-
-    commandBuffer->resourceSet = NULL;
 
     // Pool it!
 
@@ -10795,17 +10714,6 @@ static void VULKAN_INTERNAL_PerformPendingDestroys(
         }
     }
 
-    for (Sint32 i = renderer->resourceSetsToDestroyCount - 1; i >= 0; i -= 1) {
-        if (SDL_GetAtomicInt(&renderer->resourceSetsToDestroy[i]->referenceCount) == 0) {
-            VULKAN_INTERNAL_DestroyResourceSet(
-                renderer,
-                renderer->resourceSetsToDestroy[i]);
-
-            renderer->resourceSetsToDestroy[i] = renderer->resourceSetsToDestroy[renderer->resourceSetsToDestroyCount - 1];
-            renderer->resourceSetsToDestroyCount -= 1;
-        }
-    }
-
     SDL_UnlockMutex(renderer->disposeLock);
 }
 
@@ -10876,16 +10784,6 @@ static void VULKAN_INTERNAL_CleanCommandBuffer(
         (void)SDL_AtomicDecRef(&commandBuffer->usedFramebuffers[i]->referenceCount);
     }
     commandBuffer->usedFramebufferCount = 0;
-
-    for (Sint32 i = 0; i < commandBuffer->usedResourceSetCount; i += 1) {
-        (void)SDL_AtomicDecRef(&commandBuffer->usedResourceSets[i]->referenceCount);
-    }
-    commandBuffer->usedResourceSetCount = 0;
-
-    for (Sint32 i = 0; i < commandBuffer->usedResourceSlotCount; i += 1) {
-        (void)SDL_AtomicDecRef(commandBuffer->usedResourceSlots[i]);
-    }
-    commandBuffer->usedResourceSlotCount = 0;
 
     // Reset presentation data
 
@@ -13051,8 +12949,8 @@ static bool VULKAN_INTERNAL_PrepareVulkan(
         features->desiredVulkan12DeviceFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
 
-        renderer->bindlessSamplerCapacity = SDL_GetBooleanNumber(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
-        renderer->bindlessResourceCapacity = SDL_GetBooleanNumber(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_TEXTURES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_TEXTURES);
+        renderer->bindlessSamplerCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
+        renderer->bindlessResourceCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
     }
 
     renderer->requireHardwareAcceleration = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN, false);
@@ -14553,12 +14451,6 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
     renderer->framebuffersToDestroy = SDL_malloc(
         sizeof(VulkanFramebuffer *) *
         renderer->framebuffersToDestroyCapacity);
-
-    renderer->resourceSetsToDestroyCapacity = 16;
-    renderer->resourceSetsToDestroyCount = 0;
-    renderer->resourceSetsToDestroy = SDL_malloc(
-        sizeof(VulkanResourceSet *) *
-        renderer->resourceSetsToDestroyCapacity);
 
     // Defrag state
 
