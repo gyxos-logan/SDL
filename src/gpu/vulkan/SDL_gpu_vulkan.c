@@ -14590,6 +14590,9 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         renderer->allocationsToDefragCapacity * sizeof(VulkanMemoryAllocation *));
 
     if (renderer->bindless) {
+        SDL_SetAtomicU32(&renderer->bindlessSamplerCount, 0);
+        SDL_SetAtomicU32(&renderer->bindlessResourceCount, 0);
+
         bool success = VULKAN_INTERNAL_CreateBindlessResources(renderer);
         
         if (!success) {
