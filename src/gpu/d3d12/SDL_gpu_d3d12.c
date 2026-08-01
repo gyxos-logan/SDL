@@ -2632,7 +2632,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < vertexShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 1;
+        rootParameter.Descriptor.RegisterSpace = renderer->bindless ? 0 : 1;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->vertexUniformBufferRootIndex[i] = parameterCount;
@@ -2716,7 +2716,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < fragmentShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 3;
+        rootParameter.Descriptor.RegisterSpace = renderer->bindless ? 1 : 3;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = parameterCount;
@@ -3784,7 +3784,6 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
         D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
         D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
         gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
-            (renderer->bindlessResourceCapacity * heap->descriptorSize) +
             (texture->bindlessSlot * heap->descriptorSize);
 
         ID3D12Device_CopyDescriptorsSimple(
@@ -3793,19 +3792,6 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
             gpuHeapCpuHandle,
             texture->srvHandle.cpuHandle,
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        
-        if (texture->subresources != NULL && texture->subresources->uavHandle.heap != NULL) {
-            gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
-                (2 * renderer->bindlessResourceCapacity * heap->descriptorSize) +
-                (texture->bindlessSlot * heap->descriptorSize);
-
-            ID3D12Device_CopyDescriptorsSimple(
-                renderer->device,
-                1,
-                gpuHeapCpuHandle,
-                texture->subresources->uavHandle.cpuHandle,
-                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        }
     }
 
     return texture;
@@ -5127,12 +5113,18 @@ static void D3D12_PushFragmentUniformData(
 
 static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
 {
+    D3D12Renderer *renderer = commandBuffer->renderer;
     ID3D12DescriptorHeap *heaps[2];
     D3D12DescriptorHeap *viewHeap;
     D3D12DescriptorHeap *samplerHeap;
 
-    viewHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    samplerHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+    if (renderer->bindless) {
+        viewHeap = renderer->bindlessDescriptorHeapResources;
+        samplerHeap = renderer->bindlessDescriptorHeapSamplers;
+    } else {
+        viewHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        samplerHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+    }
 
     commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
     commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
