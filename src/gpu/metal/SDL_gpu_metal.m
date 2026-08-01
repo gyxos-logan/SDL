@@ -4584,10 +4584,28 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
     MetalTextureContainer *container = (MetalTextureContainer *)texture;
     MetalTexture *metalTexture = container->activeTexture;
 
-    [metalCommandBuffer->renderEncoder
-        useResource: metalTexture->handle
-        usage: MTLResourceUsageRead
-        stages: MTLRenderStageVertex | MTLRenderStageFragment];
+    if (binding != NULL) {
+        MetalTexture *writeTexture = METAL_INTERNAL_PrepareTextureForWrite(
+            metalCommandBuffer->renderer,
+            container,
+            binding->cycle);
+
+        METAL_INTERNAL_TrackTexture(metalCommandBuffer, writeTexture);
+
+        id<MTLTexture> textureView = [writeTexture->handle newTextureViewWithPixelFormat:SDLToMetal_TextureFormat(container->header.info.format)
+            textureType:SDLToMetal_TextureType(container->header.info.type, false)
+                levels:NSMakeRange(binding->mip_level, 1)
+                slices:NSMakeRange(binding->layer, 1)];
+
+        return textureView.gpuResourceID._impl;
+    }
+
+    if (container->header.info.usage & (SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ)) {
+        [metalCommandBuffer->renderEncoder
+            useResource: metalTexture->handle
+            usage: MTLResourceUsageRead
+            stages: MTLRenderStageVertex | MTLRenderStageFragment];
+    }
 
     METAL_INTERNAL_TrackTexture(metalCommandBuffer, metalTexture);
 
@@ -4602,6 +4620,19 @@ static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
     MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
     MetalBufferContainer *container = (MetalBufferContainer *)buffer;
     MetalBuffer *metalbuffer = container->activeBuffer;
+
+    if (binding != NULL) {
+        MetalBuffer *writeBuffer = METAL_INTERNAL_PrepareBufferForWrite(
+            metalCommandBuffer->renderer,
+            container,
+            binding->cycle);
+
+        METAL_INTERNAL_TrackBuffer(
+            metalCommandBuffer,
+            writeBuffer);
+
+        return writeBuffer->handle.gpuAddress;
+    }
 
     [metalCommandBuffer->renderEncoder
         useResource: metalbuffer->handle
