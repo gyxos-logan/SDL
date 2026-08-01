@@ -5677,8 +5677,8 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
             3,
             1,
             &renderer->bindlessDescriptorSet,
-            dynamicOffsetCount,
-            dynamicOffsets);
+            0,
+            NULL);
     }
 
     commandBuffer->needNewVertexUniformOffsets = false;
@@ -8966,8 +8966,8 @@ static void VULKAN_INTERNAL_BindComputeDescriptorSets(
             3,
             1,
             &renderer->bindlessDescriptorSet,
-            dynamicOffsetCount,
-            dynamicOffsets);
+            0,
+            NULL);
     }
 
     commandBuffer->needNewComputeUniformOffsets = false;
@@ -13614,6 +13614,16 @@ static SDL_GPUResourceHandle VULKAN_AcquireTextureHandle(
             binding->cycle,
             VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
 
+        Uint32 i = vulkanCommandBuffer->readWriteComputeStorageTextureSubresourceCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_TEXTURES) {
+            // TODO set error
+            return 0;
+        }
+
+        vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i] = subresource;
+        vulkanCommandBuffer->readWriteComputeStorageTextureViewBindings[i] = subresource->computeWriteView;
+
         VULKAN_INTERNAL_TrackTexture(
             vulkanCommandBuffer,
             subresource->parent);
@@ -13644,6 +13654,17 @@ static SDL_GPUResourceHandle VULKAN_AcquireBufferHandle(
             container,
             binding->cycle,
             VULKAN_BUFFER_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
+
+        Uint32 i;
+        for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && vulkanCommandBuffer->readWriteComputeStorageBuffers[i] != NULL; i += 1) {}
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
+        vulkanCommandBuffer->readWriteComputeStorageBuffers[i] = writeBuffer;
+        vulkanCommandBuffer->readWriteComputeStorageBufferBindings[i] = writeBuffer->buffer;
 
         VULKAN_INTERNAL_TrackBuffer(
             vulkanCommandBuffer,
