@@ -814,6 +814,8 @@ struct D3D12StagingDescriptor
     D3D12DescriptorHeap *heap;
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle;
     Uint32 cpuHandleIndex;
+
+    SDL_GPUResourceHandle bindlessHandle;
 };
 
 typedef struct D3D12TextureContainer
@@ -867,7 +869,7 @@ struct D3D12Texture
     // XR swapchain images are managed by OpenXR runtime
     bool externallyManaged;
 
-    Uint32 bindlessSlot;
+    SDL_GPUResourceHandle bindlessHandle;
 };
 
 typedef struct D3D12Sampler
@@ -876,7 +878,7 @@ typedef struct D3D12Sampler
     D3D12StagingDescriptor handle;
     SDL_AtomicInt referenceCount;
 
-    Uint32 bindlessSlot;
+    SDL_GPUResourceHandle bindlessHandle;
 } D3D12Sampler;
 
 typedef struct D3D12WindowData
@@ -1264,8 +1266,6 @@ struct D3D12Buffer
     Uint8 *mapPointer; // NULL except for upload buffers and fast uniform buffers
     SDL_AtomicInt referenceCount;
     bool transitioned; // used for initial resource barrier
-
-    Uint32 bindlessSlot;
 };
 
 struct D3D12BufferContainer
@@ -3259,6 +3259,46 @@ static bool D3D12_INTERNAL_AssignStagingDescriptorHandle(
     return true;
 }
 
+static SDL_GPUResourceHandle D3D12_INTERNAL_AssignBindlessSampler(
+    D3D12Renderer *renderer,
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle)
+{
+    Uint32 slot = SDL_AddAtomicU32(&renderer->bindlessSamplerCount, 1);
+
+    D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapSamplers;
+    D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+    gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (slot * heap->descriptorSize);
+
+    ID3D12Device_CopyDescriptorsSimple(
+        renderer->device,
+        1,
+        gpuHeapCpuHandle,
+        cpuHandle,
+        D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+
+    return ((Uint64)1 << 32) | slot;
+}
+
+static SDL_GPUResourceHandle D3D12_INTERNAL_AssignBindlessResource(
+    D3D12Renderer *renderer,
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle)
+{
+    Uint32 slot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
+
+    D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
+    D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+    gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (slot * heap->descriptorSize);
+
+    ID3D12Device_CopyDescriptorsSimple(
+        renderer->device,
+        1,
+        gpuHeapCpuHandle,
+        cpuHandle,
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+    return ((Uint64)1 << 32) | slot;
+}
+
 static SDL_GPUGraphicsPipeline *D3D12_CreateGraphicsPipeline(
     SDL_GPURenderer *driverData,
     const SDL_GPUGraphicsPipelineCreateInfo *createinfo)
@@ -3428,18 +3468,8 @@ static SDL_GPUSampler *D3D12_CreateSampler(
     // Ignore name property because it is not applicable to D3D12.
 
     if (renderer->bindless) {
-        sampler->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessSamplerCount, 1);
-
-        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapSamplers;
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
-        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (sampler->bindlessSlot * heap->descriptorSize);
-
-        ID3D12Device_CopyDescriptorsSimple(
-            renderer->device,
-            1,
-            gpuHeapCpuHandle,
-            sampler->handle.cpuHandle,
-            D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        sampler->bindlessHandle =
+            D3D12_INTERNAL_AssignBindlessSampler(renderer, sampler->handle.cpuHandle);
     }
 
     return (SDL_GPUSampler *)sampler;
@@ -3650,6 +3680,9 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
             handle,
             &srvDesc,
             texture->srvHandle.cpuHandle);
+
+        texture->srvHandle.bindlessHandle =
+            D3D12_INTERNAL_AssignBindlessResource(renderer, texture->srvHandle.cpuHandle);
     }
 
     SDL_SetAtomicInt(&texture->referenceCount, 0);
@@ -3784,6 +3817,11 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
                     NULL,
                     &uavDesc,
                     texture->subresources[subresourceIndex].uavHandle.cpuHandle);
+
+                if (renderer->bindless) {
+                    texture->subresources[subresourceIndex].uavHandle.bindlessHandle =
+                        D3D12_INTERNAL_AssignBindlessResource(renderer, texture->subresources[subresourceIndex].uavHandle.cpuHandle);
+                }
             }
         }
     }
@@ -3792,22 +3830,6 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
         renderer,
         texture->resource,
         debugName);
-
-    if (renderer->bindless && texture->srvHandle.cpuHandle.ptr != 0) {
-        texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
-
-        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
-        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
-            (texture->bindlessSlot * heap->descriptorSize);
-
-        ID3D12Device_CopyDescriptorsSimple(
-            renderer->device,
-            1,
-            gpuHeapCpuHandle,
-            texture->srvHandle.cpuHandle,
-            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    }
 
     return texture;
 }
@@ -3992,6 +4014,11 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
             NULL, // TODO: support counters?
             &uavDesc,
             buffer->uavDescriptor.cpuHandle);
+
+        if (renderer->bindless) {
+            buffer->uavDescriptor.bindlessHandle =
+                D3D12_INTERNAL_AssignBindlessResource(renderer, buffer->uavDescriptor.cpuHandle);
+        }
     }
 
     if (
@@ -4016,6 +4043,11 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
             handle,
             &srvDesc,
             buffer->srvDescriptor.cpuHandle);
+
+        if (renderer->bindless) {
+            buffer->srvDescriptor.bindlessHandle =
+                D3D12_INTERNAL_AssignBindlessResource(renderer, buffer->srvDescriptor.cpuHandle);
+        }
     }
 
     // FIXME: we may not need a CBV since we use root descriptors
@@ -4065,21 +4097,6 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
         renderer,
         buffer->handle,
         debugName);
-
-    if (renderer->bindless && buffer->srvDescriptor.heap != NULL) {
-        buffer->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
-
-        D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
-        D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
-        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (buffer->bindlessSlot * heap->descriptorSize);
-
-        ID3D12Device_CopyDescriptorsSimple(
-            renderer->device,
-            1,
-            gpuHeapCpuHandle,
-            buffer->srvDescriptor.cpuHandle,
-            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    }
 
     return buffer;
 }
@@ -9504,7 +9521,7 @@ static SDL_GPUResourceHandle D3D12_AcquireSamplerHandle(
 
     D3D12_INTERNAL_TrackSampler(d3d12CommandBuffer, d3d12Sampler);
 
-    return ((Uint64)1 << 32) | d3d12Sampler->bindlessSlot;
+    return d3d12Sampler->bindlessHandle;
 }
 
 static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
@@ -9514,11 +9531,28 @@ static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
 {
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
     D3D12TextureContainer *container = (D3D12TextureContainer *)texture;
+
+    if (binding != NULL) {
+        D3D12TextureSubresource *subresource = D3D12_INTERNAL_PrepareTextureSubresourceForWrite(
+            d3d12CommandBuffer,
+            container,
+            binding->layer,
+            binding->mip_level,
+            binding->cycle,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        D3D12_INTERNAL_TrackTexture(
+            d3d12CommandBuffer,
+            subresource->parent);
+
+        return subresource->uavHandle.bindlessHandle;
+    }
+
     D3D12Texture *activeTexture = container->activeTexture;
 
     D3D12_INTERNAL_TrackTexture(d3d12CommandBuffer, activeTexture);
 
-    return ((Uint64)1 << 32) |  activeTexture->bindlessSlot;
+    return activeTexture->bindlessHandle;
 }
 
 static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
@@ -9528,11 +9562,26 @@ static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
 {
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
     D3D12BufferContainer *container = (D3D12BufferContainer *)buffer;
+
+    if (binding != NULL) {
+        D3D12Buffer *writeBuffer = D3D12_INTERNAL_PrepareBufferForWrite(
+            d3d12CommandBuffer,
+            container,
+            binding->cycle,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        D3D12_INTERNAL_TrackBuffer(
+            d3d12CommandBuffer,
+            writeBuffer);
+        
+        return writeBuffer->uavDescriptor.bindlessHandle;
+    }
+
     D3D12Buffer *activeBuffer = container->activeBuffer;
 
     D3D12_INTERNAL_TrackBuffer(d3d12CommandBuffer, activeBuffer);
 
-    return ((Uint64)1 << 32) | activeBuffer->bindlessSlot;
+    return activeBuffer->srvDescriptor.bindlessHandle;
 }
 
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
