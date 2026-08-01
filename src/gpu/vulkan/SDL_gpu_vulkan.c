@@ -4116,12 +4116,9 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
         fragmentShader->numUniformBuffers);
 
     if (renderer->bindless) {
-        DescriptorSetLayout *emptyDescriptorSetLayout = VULKAN_INTERNAL_FetchDescriptorSetLayout(renderer, 0, 0, 0, 0, 0, 0, 0);
-
         descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
         descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
-        descriptorSetLayouts[2] = emptyDescriptorSetLayout->descriptorSetLayout;
-        descriptorSetLayouts[3] = renderer->bindlessDescriptorSetLayout;
+        descriptorSetLayouts[2] = renderer->bindlessDescriptorSetLayout;
     } else {
         descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
         descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
@@ -4144,7 +4141,7 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = 4;
+    pipelineLayoutCreateInfo.setLayoutCount = renderer->bindless ? 3 : 4;
     pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayouts;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
@@ -4198,7 +4195,7 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
         return pipelineResourceLayout;
     }
 
-    VkDescriptorSetLayout descriptorSetLayouts[4];
+    VkDescriptorSetLayout descriptorSetLayouts[3];
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
     VkResult vulkanResult;
 
@@ -4239,8 +4236,7 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
 
         descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[2]->descriptorSetLayout;
         descriptorSetLayouts[1] = emptyDescriptorSetLayout->descriptorSetLayout;
-        descriptorSetLayouts[2] = emptyDescriptorSetLayout->descriptorSetLayout;
-        descriptorSetLayouts[3] = renderer->bindlessDescriptorSetLayout;
+        descriptorSetLayouts[2] = renderer->bindlessDescriptorSetLayout;
     } else {
         descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
         descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
@@ -4259,7 +4255,7 @@ static VulkanComputePipelineResourceLayout *VULKAN_INTERNAL_FetchComputePipeline
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = renderer->bindless ? 4 : 3;
+    pipelineLayoutCreateInfo.setLayoutCount = 3;
     pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayouts;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
@@ -5652,6 +5648,7 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
     if (renderer->bindless) {
         sets[0] = commandBuffer->vertexUniformDescriptorSet;
         sets[1] = commandBuffer->fragmentUniformDescriptorSet;
+        sets[2] = renderer->bindlessDescriptorSet;
     } else {
         sets[0] = commandBuffer->vertexResourceDescriptorSet;
         sets[1] = commandBuffer->vertexUniformDescriptorSet;
@@ -5664,22 +5661,10 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
         VK_PIPELINE_BIND_POINT_GRAPHICS,
         resourceLayout->pipelineLayout,
         0,
-        renderer->bindless ? 2 : 4,
+        renderer->bindless ? 3 : 4,
         sets,
         dynamicOffsetCount,
         dynamicOffsets);
-
-    if (renderer->bindless) {
-        renderer->vkCmdBindDescriptorSets(
-            commandBuffer->commandBuffer,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            resourceLayout->pipelineLayout,
-            3,
-            1,
-            &renderer->bindlessDescriptorSet,
-            0,
-            NULL);
-    }
 
     commandBuffer->needNewVertexUniformOffsets = false;
     commandBuffer->needNewFragmentUniformOffsets = false;
@@ -8963,7 +8948,7 @@ static void VULKAN_INTERNAL_BindComputeDescriptorSets(
             commandBuffer->commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
             resourceLayout->pipelineLayout,
-            3,
+            2,
             1,
             &renderer->bindlessDescriptorSet,
             0,
