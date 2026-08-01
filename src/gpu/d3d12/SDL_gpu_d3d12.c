@@ -4071,9 +4071,7 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
 
         D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
         D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
-        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr +
-            (renderer->bindlessResourceCapacity * heap->descriptorSize) +
-            (buffer->bindlessSlot * heap->descriptorSize);
+        gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (buffer->bindlessSlot * heap->descriptorSize);
 
         ID3D12Device_CopyDescriptorsSimple(
             renderer->device,
@@ -10282,7 +10280,7 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
         renderer->bindlessResourceCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
 
         renderer->bindlessDescriptorHeapSamplers = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, renderer->bindlessSamplerCapacity, false);
-        renderer->bindlessDescriptorHeapResources = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResourceCapacity * 3, false);
+        renderer->bindlessDescriptorHeapResources = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResourceCapacity, false);
 
         if (renderer->bindlessDescriptorHeapSamplers == NULL || renderer->bindlessDescriptorHeapResources == NULL) {
             return NULL; // TODO cleanup
