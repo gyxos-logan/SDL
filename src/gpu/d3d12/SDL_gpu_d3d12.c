@@ -4870,11 +4870,6 @@ static void D3D12_BindGraphicsPipeline(
     ID3D12GraphicsCommandList_SetGraphicsRootSignature(d3d12CommandBuffer->graphicsCommandList, pipeline->rootSignature->handle);
     ID3D12GraphicsCommandList_IASetPrimitiveTopology(d3d12CommandBuffer->graphicsCommandList, SDLToD3D12_PrimitiveType[pipeline->primitiveType]);
 
-    if (pipeline->rootSignature->bindless) {
-        D3D12_INTERNAL_TrackGraphicsPipeline(d3d12CommandBuffer, pipeline);
-        return;
-    }
-
     // Mark that bindings are needed
     d3d12CommandBuffer->needVertexSamplerBind = true;
     d3d12CommandBuffer->needVertexStorageTextureBind = true;
