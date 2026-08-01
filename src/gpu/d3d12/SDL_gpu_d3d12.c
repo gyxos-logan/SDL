@@ -1228,6 +1228,8 @@ typedef struct D3D12ComputeRootSignature
     Sint32 readWriteStorageTextureRootIndex;
     Sint32 readWriteStorageBufferRootIndex;
     Sint32 uniformBufferRootIndex[MAX_UNIFORM_BUFFERS_PER_STAGE];
+
+    bool bindless;
 } D3D12ComputeRootSignature;
 
 struct D3D12ComputePipeline
@@ -2845,6 +2847,8 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     SDL_zeroa(descriptorRanges);
     SDL_zero(rootParameter);
 
+    d3d12ComputeRootSignature->bindless = renderer->bindless;
+
     d3d12ComputeRootSignature->samplerRootIndex = -1;
     d3d12ComputeRootSignature->samplerTextureRootIndex = -1;
     d3d12ComputeRootSignature->readOnlyStorageTextureRootIndex = -1;
@@ -2965,7 +2969,7 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     for (Uint32 i = 0; i < createInfo->num_uniform_buffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 2;
+        rootParameter.Descriptor.RegisterSpace = d3d12ComputeRootSignature->bindless ? 0 : 2;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // ALL is used for compute
         rootParameters[parameterCount] = rootParameter;
         d3d12ComputeRootSignature->uniformBufferRootIndex[i] = parameterCount;
@@ -2978,6 +2982,10 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     rootSignatureDesc.NumStaticSamplers = 0;
     rootSignatureDesc.pStaticSamplers = NULL;
     rootSignatureDesc.Flags = (D3D12_ROOT_SIGNATURE_FLAGS)0;
+
+    if (d3d12ComputeRootSignature->bindless) {
+        rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    }
 
     ID3DBlob *serializedRootSignature;
     ID3DBlob *errorBlob;
@@ -5875,7 +5883,16 @@ static void D3D12_INTERNAL_BindComputeResources(
 
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
-        D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
+            if (computePipeline->rootSignature->bindless) {
+                D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
+                commandBuffer->needComputeSamplerBind = false;
+                commandBuffer->needComputeReadOnlyStorageTextureBind = false;
+                commandBuffer->needComputeReadOnlyStorageBufferBind = false;
+            } else {
+                D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+            }
+        }
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
