@@ -1177,6 +1177,8 @@ struct D3D12Shader
     Uint32 numUniformBuffers;
     Uint32 numStorageBuffers;
     Uint32 numStorageTextures;
+
+    bool bindless;
 };
 
 typedef struct D3D12GraphicsRootSignature
@@ -1196,6 +1198,8 @@ typedef struct D3D12GraphicsRootSignature
     Sint32 fragmentStorageBufferRootIndex;
 
     Sint32 fragmentUniformBufferRootIndex[MAX_UNIFORM_BUFFERS_PER_STAGE];
+
+    bool bindless;
 } D3D12GraphicsRootSignature;
 
 struct D3D12GraphicsPipeline
@@ -2522,7 +2526,10 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     D3D12Shader *vertexShader,
     D3D12Shader *fragmentShader)
 {
-    // FIXME: I think the max can be smaller...
+    if (vertexShader->bindless != fragmentShader->bindless) {
+        return NULL;
+    }
+
     D3D12_ROOT_PARAMETER rootParameters[MAX_ROOT_SIGNATURE_PARAMETERS];
     D3D12_DESCRIPTOR_RANGE descriptorRanges[MAX_ROOT_SIGNATURE_PARAMETERS];
     Uint32 parameterCount = 0;
@@ -2554,7 +2561,9 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = -1;
     }
 
-    if (!renderer->bindless && vertexShader->num_samplers > 0) {
+    d3d12GraphicsRootSignature->bindless = vertexShader->bindless && fragmentShader->bindless;
+
+    if (vertexShader->num_samplers > 0) {
         // Vertex Samplers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
         descriptorRange.NumDescriptors = vertexShader->num_samplers;
@@ -2589,7 +2598,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (!renderer->bindless && vertexShader->numStorageTextures) {
+    if (vertexShader->numStorageTextures) {
         // Vertex storage textures
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = vertexShader->numStorageTextures;
@@ -2608,7 +2617,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (!renderer->bindless && vertexShader->numStorageBuffers) {
+    if (vertexShader->numStorageBuffers) {
 
         // Vertex storage buffers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -2632,14 +2641,14 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < vertexShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = renderer->bindless ? 0 : 1;
+        rootParameter.Descriptor.RegisterSpace = d3d12GraphicsRootSignature->bindless ? 0 : 1;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->vertexUniformBufferRootIndex[i] = parameterCount;
         parameterCount += 1;
     }
 
-    if (!renderer->bindless && fragmentShader->num_samplers) {
+    if (fragmentShader->num_samplers) {
         // Fragment Samplers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
         descriptorRange.NumDescriptors = fragmentShader->num_samplers;
@@ -2674,7 +2683,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (!renderer->bindless && fragmentShader->numStorageTextures) {
+    if (fragmentShader->numStorageTextures) {
         // Fragment Storage Textures
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = fragmentShader->numStorageTextures;
@@ -2693,7 +2702,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (!renderer->bindless && fragmentShader->numStorageBuffers) {
+    if (fragmentShader->numStorageBuffers) {
         // Fragment Storage Buffers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = fragmentShader->numStorageBuffers;
@@ -2716,7 +2725,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < fragmentShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = renderer->bindless ? 1 : 3;
+        rootParameter.Descriptor.RegisterSpace = d3d12GraphicsRootSignature->bindless ? 1 : 3;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = parameterCount;
@@ -2735,7 +2744,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     rootSignatureDesc.pStaticSamplers = NULL;
     rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
-    if (renderer->bindless) {
+    if (d3d12GraphicsRootSignature->bindless) {
         rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
     }
 
@@ -3445,6 +3454,10 @@ static SDL_GPUShader *D3D12_CreateShader(
     size_t bytecodeSize;
     D3D12Shader *shader;
 
+    if (renderer->bindless && (createinfo->num_samplers > 0 || createinfo->num_storage_buffers > 0 || createinfo->num_storage_textures > 0)) {
+        return NULL;
+    }
+
     if (!D3D12_INTERNAL_CreateShaderBytecode(
             renderer,
             createinfo->code,
@@ -3467,6 +3480,8 @@ static SDL_GPUShader *D3D12_CreateShader(
 
     shader->bytecode = bytecode;
     shader->bytecodeSize = bytecodeSize;
+
+    shader->bindless = renderer->bindless;
 
     // Ignore name property because it is not applicable to D3D12.
 
@@ -3778,7 +3793,7 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
         texture->resource,
         debugName);
 
-    if (renderer->bindless) {
+    if (renderer->bindless && texture->srvHandle.cpuHandle.ptr != 0) {
         texture->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
 
         D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;
@@ -4855,6 +4870,11 @@ static void D3D12_BindGraphicsPipeline(
     ID3D12GraphicsCommandList_SetGraphicsRootSignature(d3d12CommandBuffer->graphicsCommandList, pipeline->rootSignature->handle);
     ID3D12GraphicsCommandList_IASetPrimitiveTopology(d3d12CommandBuffer->graphicsCommandList, SDLToD3D12_PrimitiveType[pipeline->primitiveType]);
 
+    if (pipeline->rootSignature->bindless) {
+        D3D12_INTERNAL_TrackGraphicsPipeline(d3d12CommandBuffer, pipeline);
+        return;
+    }
+
     // Mark that bindings are needed
     d3d12CommandBuffer->needVertexSamplerBind = true;
     d3d12CommandBuffer->needVertexStorageTextureBind = true;
@@ -5113,18 +5133,30 @@ static void D3D12_PushFragmentUniformData(
 
 static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
 {
-    D3D12Renderer *renderer = commandBuffer->renderer;
     ID3D12DescriptorHeap *heaps[2];
     D3D12DescriptorHeap *viewHeap;
     D3D12DescriptorHeap *samplerHeap;
 
-    if (renderer->bindless) {
-        viewHeap = renderer->bindlessDescriptorHeapResources;
-        samplerHeap = renderer->bindlessDescriptorHeapSamplers;
-    } else {
-        viewHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        samplerHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-    }
+    viewHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    samplerHeap = D3D12_INTERNAL_AcquireGPUDescriptorHeapFromPool(commandBuffer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+
+    commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
+    commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
+
+    heaps[0] = viewHeap->handle;
+    heaps[1] = samplerHeap->handle;
+
+    ID3D12GraphicsCommandList_SetDescriptorHeaps(
+        commandBuffer->graphicsCommandList,
+        2,
+        heaps);
+}
+
+static void D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
+{
+    ID3D12DescriptorHeap *heaps[2];
+    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessDescriptorHeapResources;
+    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessDescriptorHeapSamplers;
 
     commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
     commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
@@ -5183,7 +5215,17 @@ static void D3D12_INTERNAL_BindGraphicsResources(
 
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
-        D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        if (graphicsPipeline->rootSignature->bindless) {
+            D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
+            commandBuffer->needVertexSamplerBind = false;
+            commandBuffer->needVertexStorageTextureBind = false;
+            commandBuffer->needVertexStorageBufferBind = false;
+            commandBuffer->needFragmentSamplerBind = false;
+            commandBuffer->needFragmentStorageTextureBind = false;
+            commandBuffer->needFragmentStorageBufferBind = false;
+        } else {
+            D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        }
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
