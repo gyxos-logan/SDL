@@ -5552,9 +5552,9 @@ static void VULKAN_INTERNAL_BindGraphicsDescriptorSets(
 
     VkDescriptorSet sets[4];
     if (renderer->bindless) {
-        sets[0] = renderer->bindlessDescriptorSet;
-        sets[1] = commandBuffer->vertexUniformDescriptorSet;
-        sets[2] = commandBuffer->fragmentUniformDescriptorSet;
+        sets[0] = commandBuffer->vertexUniformDescriptorSet;
+        sets[1] = commandBuffer->fragmentUniformDescriptorSet;
+        sets[2] = renderer->bindlessDescriptorSet;
     } else {
         sets[0] = commandBuffer->vertexResourceDescriptorSet;
         sets[1] = commandBuffer->vertexUniformDescriptorSet;
