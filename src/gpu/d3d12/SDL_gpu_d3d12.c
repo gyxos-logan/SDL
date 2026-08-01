@@ -4051,7 +4051,7 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
         buffer->handle,
         debugName);
 
-    if (renderer->bindless) {
+    if (renderer->bindless && buffer->srvDescriptor.heap != NULL) {
         buffer->bindlessSlot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
 
         D3D12DescriptorHeap *heap = renderer->bindlessDescriptorHeapResources;

@@ -4114,9 +4114,9 @@ static VulkanGraphicsPipelineResourceLayout *VULKAN_INTERNAL_FetchGraphicsPipeli
         fragmentShader->numUniformBuffers);
 
     if (renderer->bindless) {
-        descriptorSetLayouts[0] = renderer->bindlessDescriptorSetLayout;
-        descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
-        descriptorSetLayouts[2] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
+        descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
+        descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[3]->descriptorSetLayout;
+        descriptorSetLayouts[2] = renderer->bindlessDescriptorSetLayout;
     } else {
         descriptorSetLayouts[0] = pipelineResourceLayout->descriptorSetLayouts[0]->descriptorSetLayout;
         descriptorSetLayouts[1] = pipelineResourceLayout->descriptorSetLayouts[1]->descriptorSetLayout;
@@ -4392,7 +4392,7 @@ static VulkanBuffer *VULKAN_INTERNAL_CreateBuffer(
         writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeDescriptorSet.pNext = NULL;
         writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
-        writeDescriptorSet.dstBinding = 3;
+        writeDescriptorSet.dstBinding = 7;
         writeDescriptorSet.dstArrayElement = buffer->bindlessSlot;
         writeDescriptorSet.descriptorCount = 1;
         writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -6106,7 +6106,7 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
                 writeDescriptorSets[descriptorWriteCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writeDescriptorSets[descriptorWriteCount].pNext = NULL;
                 writeDescriptorSets[descriptorWriteCount].dstSet = renderer->bindlessDescriptorSet;
-                writeDescriptorSets[descriptorWriteCount].dstBinding = 1;
+                writeDescriptorSets[descriptorWriteCount].dstBinding = 2;
                 writeDescriptorSets[descriptorWriteCount].dstArrayElement = texture->bindlessSlot;
                 writeDescriptorSets[descriptorWriteCount].descriptorCount = 1;
                 writeDescriptorSets[descriptorWriteCount].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -6125,7 +6125,7 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
                 writeDescriptorSets[descriptorWriteCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writeDescriptorSets[descriptorWriteCount].pNext = NULL;
                 writeDescriptorSets[descriptorWriteCount].dstSet = renderer->bindlessDescriptorSet;
-                writeDescriptorSets[descriptorWriteCount].dstBinding = 2;
+                writeDescriptorSets[descriptorWriteCount].dstBinding = 3;
                 writeDescriptorSets[descriptorWriteCount].dstArrayElement = texture->bindlessSlot;
                 writeDescriptorSets[descriptorWriteCount].descriptorCount = 1;
                 writeDescriptorSets[descriptorWriteCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -13602,19 +13602,19 @@ static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
     descriptorSetLayoutBinding[0].stageFlags = shaderStage;
     descriptorSetLayoutBinding[0].pImmutableSamplers = NULL;
 
-    descriptorSetLayoutBinding[1].binding = 1;
+    descriptorSetLayoutBinding[1].binding = 2;
     descriptorSetLayoutBinding[1].descriptorCount = renderer->bindlessResourceCapacity;
     descriptorSetLayoutBinding[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     descriptorSetLayoutBinding[1].stageFlags = shaderStage;
     descriptorSetLayoutBinding[1].pImmutableSamplers = NULL;
 
-    descriptorSetLayoutBinding[2].binding = 2;
+    descriptorSetLayoutBinding[2].binding = 3;
     descriptorSetLayoutBinding[2].descriptorCount = renderer->bindlessResourceCapacity;
     descriptorSetLayoutBinding[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     descriptorSetLayoutBinding[2].stageFlags = shaderStage;
     descriptorSetLayoutBinding[2].pImmutableSamplers = NULL;
 
-    descriptorSetLayoutBinding[3].binding = 3;
+    descriptorSetLayoutBinding[3].binding = 7;
     descriptorSetLayoutBinding[3].descriptorCount = renderer->bindlessResourceCapacity;
     descriptorSetLayoutBinding[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorSetLayoutBinding[3].stageFlags = shaderStage;
