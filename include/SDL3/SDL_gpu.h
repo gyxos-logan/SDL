@@ -4669,7 +4669,7 @@ typedef Uint64 SDL_GPUResourceHandle;
  *
  * \since This function is not available in standard SDL.
  */
-extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUSampler(
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUSamplerHandle(
     SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUSampler *sampler);
 
@@ -4678,26 +4678,30 @@ extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUSampler(
  *
  * \param command_buffer a command buffer.
  * \param texture a texture to be resolved.
+ * \param binding leave NULL for read, supply for write or read + write access.
  * \returns resource handle
  *
  * \since This function is not available in standard SDL.
  */
-extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUTexture(
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUTextureHandle(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUTexture *texture);
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding);
 
 /**
  * Resolves a buffer to a handle.
  *
  * \param command_buffer a command buffer.
  * \param buffer a buffer to be resolved.
+ * \param binding leave NULL for read, supply for write or read + write access.
  * \returns resource handle
  *
  * \since This function is not available in standard SDL.
  */
-extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_ResolveGPUBuffer(
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUBufferHandle(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUBuffer *buffer);
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding);
 
 #ifdef __cplusplus
 }

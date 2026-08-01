@@ -4566,7 +4566,7 @@ static XrResult METAL_CreateXRSession(
     return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
 
-static SDL_GPUResourceHandle METAL_ResolveSampler(
+static SDL_GPUResourceHandle METAL_AcquireSamplerHandle(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUSampler *sampler)
 {
@@ -4575,9 +4575,10 @@ static SDL_GPUResourceHandle METAL_ResolveSampler(
     return metalSampler->handle.gpuResourceID._impl;
 }
 
-static SDL_GPUResourceHandle METAL_ResolveTexture(
+static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUTexture *texture)
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
 {
     MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
     MetalTextureContainer *container = (MetalTextureContainer *)texture;
@@ -4593,9 +4594,10 @@ static SDL_GPUResourceHandle METAL_ResolveTexture(
     return metalTexture->handle.gpuResourceID._impl;
 }
 
-static SDL_GPUResourceHandle METAL_ResolveBuffer(
+static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUBuffer *buffer)
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
 {
     MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
     MetalBufferContainer *container = (MetalBufferContainer *)buffer;

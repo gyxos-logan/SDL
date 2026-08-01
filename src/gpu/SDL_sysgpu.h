@@ -1125,17 +1125,19 @@ struct SDL_GPUDevice
     bool validate_feature_depth_clamp_disabled;
     bool validate_feature_anisotropy_disabled;
 
-    SDL_GPUResourceHandle (*ResolveSampler)(
+    SDL_GPUResourceHandle (*AcquireSamplerHandle)(
         SDL_GPUCommandBuffer *command_buffer,
         SDL_GPUSampler *sampler);
 
-    SDL_GPUResourceHandle (*ResolveTexture)(
+    SDL_GPUResourceHandle (*AcquireTextureHandle)(
         SDL_GPUCommandBuffer *command_buffer,
-        SDL_GPUTexture *texture);
+        SDL_GPUTexture *texture,
+        const SDL_GPUStorageTextureReadWriteBinding *binding);
 
-    SDL_GPUResourceHandle (*ResolveBuffer)(
+    SDL_GPUResourceHandle (*AcquireBufferHandle)(
         SDL_GPUCommandBuffer *command_buffer,
-        SDL_GPUBuffer *buffer);
+        SDL_GPUBuffer *buffer,
+        const SDL_GPUStorageBufferReadWriteBinding *binding);
 };
 
 #define ASSIGN_DRIVER_FUNC(func, name) \
@@ -1228,9 +1230,9 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(ReleaseFence, name)                  \
     ASSIGN_DRIVER_FUNC(SupportsTextureFormat, name)         \
     ASSIGN_DRIVER_FUNC(SupportsSampleCount, name)           \
-    ASSIGN_DRIVER_FUNC(ResolveSampler, name)                \
-    ASSIGN_DRIVER_FUNC(ResolveTexture, name)                \
-    ASSIGN_DRIVER_FUNC(ResolveBuffer, name)
+    ASSIGN_DRIVER_FUNC(AcquireSamplerHandle, name)                \
+    ASSIGN_DRIVER_FUNC(AcquireTextureHandle, name)                \
+    ASSIGN_DRIVER_FUNC(AcquireBufferHandle, name)
 
 typedef struct SDL_GPUBootstrap
 {

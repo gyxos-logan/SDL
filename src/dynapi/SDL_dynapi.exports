@@ -1302,6 +1302,6 @@ _SDL_GetDeviceFormFactor
 _SDL_GetDeviceFormFactorName
 _SDL_IsUbuntuTouch
 _SDL_GetNumProperties
-_SDL_ResolveGPUSampler
-_SDL_ResolveGPUTexture
-_SDL_ResolveGPUBuffer
+_SDL_AcquireGPUSamplerHandle
+_SDL_AcquireGPUTextureHandle
+_SDL_AcquireGPUBufferHandle

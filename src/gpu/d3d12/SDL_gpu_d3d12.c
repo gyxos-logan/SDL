@@ -9495,7 +9495,7 @@ static XrResult D3D12_CreateXRSession(
 #endif
 }
 
-static SDL_GPUResourceHandle D3D12_ResolveSampler(
+static SDL_GPUResourceHandle D3D12_AcquireSamplerHandle(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUSampler *sampler)
 {
@@ -9507,9 +9507,10 @@ static SDL_GPUResourceHandle D3D12_ResolveSampler(
     return ((Uint64)1 << 32) | d3d12Sampler->bindlessSlot;
 }
 
-static SDL_GPUResourceHandle D3D12_ResolveTexture(
+static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUTexture *texture)
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
 {
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
     D3D12TextureContainer *container = (D3D12TextureContainer *)texture;
@@ -9520,9 +9521,10 @@ static SDL_GPUResourceHandle D3D12_ResolveTexture(
     return ((Uint64)1 << 32) |  activeTexture->bindlessSlot;
 }
 
-static SDL_GPUResourceHandle D3D12_ResolveBuffer(
+static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUBuffer *buffer)
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
 {
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
     D3D12BufferContainer *container = (D3D12BufferContainer *)buffer;

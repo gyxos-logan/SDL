@@ -3632,29 +3632,33 @@ XrResult SDL_CreateGPUXRSwapchain(
     return device->CreateXRSwapchain(device->driverData, session, createinfo, format, swapchain, textures);
 }
 
-SDL_GPUResourceHandle SDL_ResolveGPUSampler(
+SDL_GPUResourceHandle SDL_AcquireGPUSamplerHandle(
     SDL_GPUCommandBuffer *command_buffer,
     SDL_GPUSampler *sampler)
 {
-    return COMMAND_BUFFER_DEVICE->ResolveSampler(
+    return COMMAND_BUFFER_DEVICE->AcquireSamplerHandle(
         command_buffer,
         sampler);
 }
 
-SDL_GPUResourceHandle SDL_ResolveGPUTexture(
+SDL_GPUResourceHandle SDL_AcquireGPUTextureHandle(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUTexture *texture)
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
 {
-    return COMMAND_BUFFER_DEVICE->ResolveTexture(
+    return COMMAND_BUFFER_DEVICE->AcquireTextureHandle(
         command_buffer,
-        texture);
+        texture,
+        binding);
 }
 
-SDL_GPUResourceHandle SDL_ResolveGPUBuffer(
+SDL_GPUResourceHandle SDL_AcquireGPUBufferHandle(
     SDL_GPUCommandBuffer *command_buffer,
-    SDL_GPUBuffer *buffer)
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
 {
-    return COMMAND_BUFFER_DEVICE->ResolveBuffer(
+    return COMMAND_BUFFER_DEVICE->AcquireBufferHandle(
         command_buffer,
-        buffer);
+        buffer,
+        binding);
 }

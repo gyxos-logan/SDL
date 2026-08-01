@@ -13541,7 +13541,7 @@ static XrResult VULKAN_CreateXRSession(
 #endif
 }
 
-static SDL_GPUResourceHandle VULKAN_ResolveSampler(
+static SDL_GPUResourceHandle VULKAN_AcquireSamplerHandle(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUSampler *sampler)
 {
@@ -13557,9 +13557,10 @@ static SDL_GPUResourceHandle VULKAN_ResolveSampler(
     return ((Uint64)1 << 32) | vulkanSampler->bindlessSlot;
 }
 
-static SDL_GPUResourceHandle VULKAN_ResolveTexture(
+static SDL_GPUResourceHandle VULKAN_AcquireTextureHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUTexture *texture)
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
 {
     VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
     VulkanTextureContainer *container = (VulkanTextureContainer *)texture;
@@ -13574,9 +13575,10 @@ static SDL_GPUResourceHandle VULKAN_ResolveTexture(
     return ((Uint64)1 << 32) | activeTexture->bindlessSlot;
 }
 
-static SDL_GPUResourceHandle VULKAN_ResolveBuffer(
+static SDL_GPUResourceHandle VULKAN_AcquireBufferHandle(
     SDL_GPUCommandBuffer *commandBuffer,
-    SDL_GPUBuffer *buffer)
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
 {
     VulkanCommandBuffer *vulkanCommandBuffer = (VulkanCommandBuffer *)commandBuffer;
     VulkanBufferContainer *container = (VulkanBufferContainer *)buffer;
