@@ -4585,10 +4585,26 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
     MetalTexture *metalTexture = container->activeTexture;
 
     if (binding != NULL) {
+        Uint32 i;
+        for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && metalCommandBuffer->computeReadWriteTextures[i] != nil; i += 1) {}
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
         MetalTexture *writeTexture = METAL_INTERNAL_PrepareTextureForWrite(
             metalCommandBuffer->renderer,
             container,
             binding->cycle);
+
+        if (container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) {
+            [metalCommandBuffer->computeEncoder useResource:writeTexture->handle
+                usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+        } else {
+            [metalCommandBuffer->computeEncoder useResource:writeTexture->handle
+                usage:MTLResourceUsageWrite];
+        }
 
         METAL_INTERNAL_TrackTexture(metalCommandBuffer, writeTexture);
 
@@ -4596,6 +4612,8 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
             textureType:SDLToMetal_TextureType(container->header.info.type, false)
                 levels:NSMakeRange(binding->mip_level, 1)
                 slices:NSMakeRange(binding->layer, 1)];
+    
+        metalCommandBuffer->computeReadWriteTextures[i] = textureView;
 
         return textureView.gpuResourceID._impl;
     }
@@ -4605,6 +4623,11 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
             useResource: metalTexture->handle
             usage: MTLResourceUsageRead
             stages: MTLRenderStageVertex | MTLRenderStageFragment];
+    }
+
+    if (container->header.info.usage & (SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) { // TODO: Do we need read-write or should that always have binding != null
+        [metalCommandBuffer->computeEncoder useResource:metalTexture->handle
+            usage:MTLResourceUsageRead];
     }
 
     METAL_INTERNAL_TrackTexture(metalCommandBuffer, metalTexture);
@@ -4622,14 +4645,27 @@ static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
     MetalBuffer *metalbuffer = container->activeBuffer;
 
     if (binding != NULL) {
+        Uint32 i;
+        for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && metalCommandBuffer->computeReadWriteTextures[i] != nil; i += 1) {}
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
         MetalBuffer *writeBuffer = METAL_INTERNAL_PrepareBufferForWrite(
             metalCommandBuffer->renderer,
             container,
             binding->cycle);
 
+        [metalCommandBuffer->computeEncoder useResource:writeBuffer->handle
+            usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+
         METAL_INTERNAL_TrackBuffer(
             metalCommandBuffer,
             writeBuffer);
+
+        metalCommandBuffer->computeReadWriteBuffers[i] = writeBuffer->handle;
 
         return writeBuffer->handle.gpuAddress;
     }
@@ -4638,6 +4674,9 @@ static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
         useResource: metalbuffer->handle
         usage: MTLResourceUsageRead
         stages: MTLRenderStageVertex | MTLRenderStageFragment];
+
+    [metalCommandBuffer->computeEncoder useResource:metalbuffer->handle
+        usage:MTLResourceUsageRead];        
 
     METAL_INTERNAL_TrackBuffer(metalCommandBuffer, metalbuffer);
 
