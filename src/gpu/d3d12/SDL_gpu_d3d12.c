@@ -868,8 +868,6 @@ struct D3D12Texture
 
     // XR swapchain images are managed by OpenXR runtime
     bool externallyManaged;
-
-    SDL_GPUResourceHandle bindlessHandle;
 };
 
 typedef struct D3D12Sampler
@@ -9569,7 +9567,7 @@ static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
 
     D3D12_INTERNAL_TrackTexture(d3d12CommandBuffer, activeTexture);
 
-    return activeTexture->bindlessHandle;
+    return activeTexture->srvHandle.bindlessHandle;
 }
 
 static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
