@@ -13605,6 +13605,13 @@ static SDL_GPUResourceHandle VULKAN_AcquireTextureHandle(
     VulkanTexture *activeTexture = container->activeTexture;
 
     if (binding != NULL) {
+        Uint32 i = vulkanCommandBuffer->readWriteComputeStorageTextureSubresourceCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_TEXTURES) {
+            // TODO set error
+            return 0;
+        }
+
         VulkanTextureSubresource *subresource = VULKAN_INTERNAL_PrepareTextureSubresourceForWrite(
             renderer,
             vulkanCommandBuffer,
@@ -13613,13 +13620,6 @@ static SDL_GPUResourceHandle VULKAN_AcquireTextureHandle(
             binding->mip_level,
             binding->cycle,
             VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
-
-        Uint32 i = vulkanCommandBuffer->readWriteComputeStorageTextureSubresourceCount++;
-
-        if (i >= MAX_COMPUTE_WRITE_TEXTURES) {
-            // TODO set error
-            return 0;
-        }
 
         vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i] = subresource;
         vulkanCommandBuffer->readWriteComputeStorageTextureViewBindings[i] = subresource->computeWriteView;
@@ -13648,13 +13648,6 @@ static SDL_GPUResourceHandle VULKAN_AcquireBufferHandle(
     VulkanBuffer *activeBuffer = container->activeBuffer;
 
     if (binding != NULL) {
-        VulkanBuffer* writeBuffer = VULKAN_INTERNAL_PrepareBufferForWrite(
-            renderer,
-            vulkanCommandBuffer,
-            container,
-            binding->cycle,
-            VULKAN_BUFFER_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
-
         Uint32 i;
         for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && vulkanCommandBuffer->readWriteComputeStorageBuffers[i] != NULL; i += 1) {}
 
@@ -13662,6 +13655,13 @@ static SDL_GPUResourceHandle VULKAN_AcquireBufferHandle(
             // TODO set error
             return 0;
         }
+
+        VulkanBuffer* writeBuffer = VULKAN_INTERNAL_PrepareBufferForWrite(
+            renderer,
+            vulkanCommandBuffer,
+            container,
+            binding->cycle,
+            VULKAN_BUFFER_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
 
         vulkanCommandBuffer->readWriteComputeStorageBuffers[i] = writeBuffer;
         vulkanCommandBuffer->readWriteComputeStorageBufferBindings[i] = writeBuffer->buffer;

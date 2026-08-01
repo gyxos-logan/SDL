@@ -9548,6 +9548,13 @@ static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
     D3D12TextureContainer *container = (D3D12TextureContainer *)texture;
 
     if (binding != NULL) {
+        Uint32 i = d3d12CommandBuffer->computeReadWriteStorageTextureSubresourceCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_TEXTURES) {
+            // TODO set error
+            return 0;
+        }
+
         D3D12TextureSubresource *subresource = D3D12_INTERNAL_PrepareTextureSubresourceForWrite(
             d3d12CommandBuffer,
             container,
@@ -9555,6 +9562,9 @@ static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
             binding->mip_level,
             binding->cycle,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        d3d12CommandBuffer->computeReadWriteStorageTextureSubresources[i] = subresource;
+        d3d12CommandBuffer->computeReadWriteStorageTextureDescriptorHandles[i] = subresource->uavHandle.cpuHandle;
 
         D3D12_INTERNAL_TrackTexture(
             d3d12CommandBuffer,
@@ -9579,11 +9589,21 @@ static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
     D3D12BufferContainer *container = (D3D12BufferContainer *)buffer;
 
     if (binding != NULL) {
+        Uint32 i = d3d12CommandBuffer->computeReadWriteStorageBufferCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
         D3D12Buffer *writeBuffer = D3D12_INTERNAL_PrepareBufferForWrite(
             d3d12CommandBuffer,
             container,
             binding->cycle,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        d3d12CommandBuffer->computeReadWriteStorageBuffers[i] = writeBuffer;
+        d3d12CommandBuffer->computeReadWriteStorageBufferDescriptorHandles[i] = writeBuffer->uavDescriptor.cpuHandle;
 
         D3D12_INTERNAL_TrackBuffer(
             d3d12CommandBuffer,
