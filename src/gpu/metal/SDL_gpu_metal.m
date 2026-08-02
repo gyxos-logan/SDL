@@ -4599,10 +4599,12 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
             binding->cycle);
 
         if (container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) {
-            [metalCommandBuffer->computeEncoder useResource:writeTexture->handle
+            [metalCommandBuffer->computeEncoder
+                useResource:writeTexture->handle
                 usage:MTLResourceUsageRead | MTLResourceUsageWrite];
         } else {
-            [metalCommandBuffer->computeEncoder useResource:writeTexture->handle
+            [metalCommandBuffer->computeEncoder
+                useResource:writeTexture->handle
                 usage:MTLResourceUsageWrite];
         }
 
@@ -4626,7 +4628,8 @@ static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
     }
 
     if (container->header.info.usage & (SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) { // TODO: Do we need read-write or should that always have binding != null
-        [metalCommandBuffer->computeEncoder useResource:metalTexture->handle
+        [metalCommandBuffer->computeEncoder
+            useResource:metalTexture->handle
             usage:MTLResourceUsageRead];
     }
 
@@ -4658,7 +4661,8 @@ static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
             container,
             binding->cycle);
 
-        [metalCommandBuffer->computeEncoder useResource:writeBuffer->handle
+        [metalCommandBuffer->computeEncoder
+            useResource:writeBuffer->handle
             usage:MTLResourceUsageRead | MTLResourceUsageWrite];
 
         METAL_INTERNAL_TrackBuffer(
@@ -4675,7 +4679,8 @@ static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
         usage: MTLResourceUsageRead
         stages: MTLRenderStageVertex | MTLRenderStageFragment];
 
-    [metalCommandBuffer->computeEncoder useResource:metalbuffer->handle
+    [metalCommandBuffer->computeEncoder
+        useResource:metalbuffer->handle
         usage:MTLResourceUsageRead];        
 
     METAL_INTERNAL_TrackBuffer(metalCommandBuffer, metalbuffer);
