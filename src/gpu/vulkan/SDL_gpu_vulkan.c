@@ -478,7 +478,7 @@ typedef struct VulkanBufferContainer VulkanBufferContainer;
 typedef struct VulkanUniformBuffer VulkanUniformBuffer;
 typedef struct VulkanTexture VulkanTexture;
 typedef struct VulkanTextureContainer VulkanTextureContainer;
-typedef struct VulkanRendererBindlessSlots VulkanRendererBindlessSlots;
+typedef struct VulkanBindlessSlotAllocator VulkanBindlessSlotAllocator;
 
 typedef struct VulkanFenceHandle
 {
@@ -1164,7 +1164,7 @@ typedef struct VulkanFeatures
 
 // Context
 
-struct VulkanRendererBindlessSlots
+struct VulkanBindlessSlotAllocator
 {
     SDL_Mutex *lock;
 
@@ -1306,8 +1306,8 @@ struct VulkanRenderer
 
 
     bool bindless;
-    VulkanRendererBindlessSlots bindlessSamplers;
-    VulkanRendererBindlessSlots bindlessResources;
+    VulkanBindlessSlotAllocator bindlessSamplers;
+    VulkanBindlessSlotAllocator bindlessResources;
 
     VkDescriptorSetLayout bindlessDescriptorSetLayout;
     VkDescriptorPool bindlessDescriptorPool;
@@ -3070,7 +3070,7 @@ static void VULKAN_INTERNAL_TextureTransitionToDefaultUsage(
 
 static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessHandle(
     VulkanRenderer *renderer,
-    VulkanRendererBindlessSlots *slots,
+    VulkanBindlessSlotAllocator *slots,
     VkWriteDescriptorSet *writeDescriptorSet)
 {
     Uint32 slot;
@@ -3103,7 +3103,7 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessHandle(
 }
 
 static void VULKAN_INTERNAL_ReleaseBindlessHandle(
-    VulkanRendererBindlessSlots *slots,
+    VulkanBindlessSlotAllocator *slots,
     SDL_GPUResourceHandle handle)
 {
     if (handle == 0) {
@@ -14228,9 +14228,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         renderer->allocationsToDefragCapacity * sizeof(VulkanMemoryAllocation *));
 
     if (renderer->bindless) {
-        bool success = VULKAN_INTERNAL_CreateBindlessResources(renderer);
-        
-        if (!success) {
+        if (!VULKAN_INTERNAL_CreateBindlessResources(renderer)) {
             return NULL; // TODO cleanup
         }
     }

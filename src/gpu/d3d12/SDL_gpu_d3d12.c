@@ -765,6 +765,7 @@ typedef struct D3D12UniformBuffer D3D12UniformBuffer;
 typedef struct D3D12DescriptorHeap D3D12DescriptorHeap;
 typedef struct D3D12StagingDescriptor D3D12StagingDescriptor;
 typedef struct D3D12TextureDownload D3D12TextureDownload;
+typedef struct D3D12BindlessSlotAllocator D3D12BindlessSlotAllocator;
 
 typedef struct D3D12Fence
 {
@@ -917,6 +918,20 @@ typedef struct WinPixEventRuntimeFns {
 } WinPixEventRuntimeFns;
 #endif
 
+struct D3D12BindlessSlotAllocator
+{
+    SDL_Mutex *lock;
+
+    D3D12DescriptorHeap *bindlessDescriptorHeap
+
+    Uint32 capacity;
+    Uint32 count;
+
+    Uint32 *freed;
+    Uint32 freeCount;
+    Uint32 freeCapacity;
+};
+
 struct D3D12Renderer
 {
     // Reference to the parent device
@@ -1038,16 +1053,8 @@ struct D3D12Renderer
 #endif
 
     bool bindless;
-    Uint32 bindlessSamplerCapacity;
-    Uint32 bindlessResourceCapacity;
-
-    SDL_AtomicU32 bindlessSamplerCount;
-    SDL_AtomicU32 bindlessResourceCount;
-
-    D3D12DescriptorHeap *bindlessDescriptorHeapSamplers;
-    D3D12DescriptorHeap *bindlessDescriptorHeapResources;
-
-    SDL_Mutex *bindlessDescriptorHeapWrite;
+    D3D12BindlessSlotAllocator bindlessSamplers;
+    D3D12BindlessSlotAllocator bindlessResources;
 };
 
 struct D3D12CommandBuffer
@@ -5171,8 +5178,8 @@ static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuff
 static void D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
 {
     ID3D12DescriptorHeap *heaps[2];
-    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessDescriptorHeapResources;
-    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessDescriptorHeapSamplers;
+    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessResources->descriptorHeap;
+    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessSamplers->descriptorHeap;
 
     commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
     commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
@@ -9619,6 +9626,33 @@ static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
     return activeBuffer->srvDescriptor.bindlessHandle;
 }
 
+static bool D3D12_CreateBindlessResources(D3D12Renderer *renderer)
+{
+    renderer->bindlessSamplers.lock = SDL_CreateMutex();
+    renderer->bindlessResources.lock = SDL_CreateMutex();
+
+    renderer->bindlessSamplers.count = 0;
+    renderer->bindlessResources.count = 0;
+
+    renderer->bindlessSamplers.freeCapacity = 16;
+    renderer->bindlessSamplers.freeCount = 0;
+    renderer->bindlessSamplers.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessSamplers.freeCapacity);
+
+    renderer->bindlessResources.freeCapacity = 16;
+    renderer->bindlessResources.freeCount = 0;
+    renderer->bindlessResources.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessResources.freeCapacity);
+
+    renderer->bindlessSamplers.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
+    renderer->bindlessResources.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
+
+    renderer->bindlessDescriptorHeapSamplers = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, renderer->bindlessSamplers.capacity, false);
+    renderer->bindlessDescriptorHeapResources = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResources.capacity, false);
+}
+
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
 {
     SDL_GPUDevice *result;
@@ -10357,18 +10391,8 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
     renderer->sdlGPUDevice = result;
 
     renderer->bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
-    if (renderer->bindless) {
-        SDL_SetAtomicU32(&renderer->bindlessSamplerCount, 0);
-        SDL_SetAtomicU32(&renderer->bindlessResourceCount, 0);
-        renderer->bindlessDescriptorHeapWrite = SDL_CreateMutex();
-
-        renderer->bindlessSamplerCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
-        renderer->bindlessResourceCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
-
-        renderer->bindlessDescriptorHeapSamplers = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, renderer->bindlessSamplerCapacity, false);
-        renderer->bindlessDescriptorHeapResources = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResourceCapacity, false);
-
-        if (renderer->bindlessDescriptorHeapSamplers == NULL || renderer->bindlessDescriptorHeapResources == NULL) {
+    if (renderer->bindless && ) {
+        if (!D3D12_INTERNAL_CreateBindlessResources()) {
             return NULL; // TODO cleanup
         }
     }
