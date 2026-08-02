@@ -478,6 +478,7 @@ typedef struct VulkanBufferContainer VulkanBufferContainer;
 typedef struct VulkanUniformBuffer VulkanUniformBuffer;
 typedef struct VulkanTexture VulkanTexture;
 typedef struct VulkanTextureContainer VulkanTextureContainer;
+typedef struct VulkanRendererBindlessSlots VulkanRendererBindlessSlots;
 
 typedef struct VulkanFenceHandle
 {
@@ -1163,6 +1164,18 @@ typedef struct VulkanFeatures
 
 // Context
 
+struct VulkanRendererBindlessSlots
+{
+    SDL_Mutex *lock;
+
+    Uint32 capacity;
+    Uint32 count;
+
+    Uint32 *freed;
+    Uint32 freeCount;
+    Uint32 freeCapacity;
+};
+
 struct VulkanRenderer
 {
     VkInstance instance;
@@ -1293,17 +1306,12 @@ struct VulkanRenderer
 
 
     bool bindless;
-    Uint32 bindlessSamplerCapacity;
-    Uint32 bindlessResourceCapacity;
-
-    SDL_AtomicU32 bindlessSamplerCount;
-    SDL_AtomicU32 bindlessResourceCount;
+    VulkanRendererBindlessSlots bindlessSamplers;
+    VulkanRendererBindlessSlots bindlessResources;
 
     VkDescriptorSetLayout bindlessDescriptorSetLayout;
     VkDescriptorPool bindlessDescriptorPool;
     VkDescriptorSet bindlessDescriptorSet;
-
-    SDL_Mutex *bindlessDescriptorSetWrite;
 };
 
 // Forward declarations
@@ -3060,6 +3068,59 @@ static void VULKAN_INTERNAL_TextureTransitionToDefaultUsage(
 
 // Resource Disposal
 
+static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessHandle(
+    VulkanRenderer *renderer,
+    VulkanRendererBindlessSlots *slots,
+    VkWriteDescriptorSet *writeDescriptorSet)
+{
+    Uint32 slot;
+
+    SDL_LockMutex(slots->lock);
+
+    if (slots->freeCount > 0) {
+        slots->freeCount--;
+        slot = slots->freed[slots->freeCount];
+    } else if (slots->count < slots->capacity) {
+        slot = slots->count++;
+    } else {
+        SDL_UnlockMutex(slots->lock);
+        SDL_SetError("No GPU bindings available");
+        return 0;
+    }
+
+    writeDescriptorSet->dstArrayElement = slot;
+
+    renderer->vkUpdateDescriptorSets(
+        renderer->logicalDevice,
+        1,
+        writeDescriptorSet,
+        0,
+        NULL);
+
+    SDL_UnlockMutex(slots->lock);
+
+    return ((Uint64)1 << 32) | slot;
+}
+
+static void VULKAN_INTERNAL_ReleaseBindlessHandle(
+    VulkanRendererBindlessSlots *slots,
+    SDL_GPUResourceHandle handle)
+{
+    if (handle == 0) {
+        return;
+    }
+
+    SDL_LockMutex(slots->lock);
+    EXPAND_ARRAY_IF_NEEDED(
+        slots->freed,
+        Uint32,
+        slots->freeCount + 1,
+        slots->freeCapacity,
+        slots->freeCapacity * 2);
+    slots->freed[slots->freeCount++] = (Uint32)handle;
+    SDL_UnlockMutex(slots->lock);
+}
+
 static void VULKAN_INTERNAL_ReleaseFramebuffer(
     VulkanRenderer *renderer,
     VulkanFramebuffer *framebuffer)
@@ -3190,6 +3251,8 @@ static void VULKAN_INTERNAL_DestroyTexture(
                 NULL);
         }
 
+        VULKAN_INTERNAL_ReleaseBindlessHandle(&renderer->bindlessResources, texture->subresources[subresourceIndex].bindlessComputeWriteHandle);
+
         if (texture->subresources[subresourceIndex].depthStencilView != VK_NULL_HANDLE) {
             VULKAN_INTERNAL_RemoveFramebuffersContainingView(
                 renderer,
@@ -3209,6 +3272,8 @@ static void VULKAN_INTERNAL_DestroyTexture(
             texture->fullView,
             NULL);
     }
+
+    VULKAN_INTERNAL_ReleaseBindlessHandle(&renderer->bindlessResources, texture->bindlessHandle);
 
     /* Don't free an externally managed VkImage (e.g. XR swapchain images) */
     if (texture->image && !texture->externallyManaged) {
@@ -3235,6 +3300,8 @@ static void VULKAN_INTERNAL_DestroyBuffer(
         renderer->logicalDevice,
         buffer->buffer,
         NULL);
+
+    VULKAN_INTERNAL_ReleaseBindlessHandle(&renderer->bindlessResources, buffer->bindlessHandle);
 
     VULKAN_INTERNAL_RemoveMemoryUsedRegion(
         renderer,
@@ -3353,6 +3420,8 @@ static void VULKAN_INTERNAL_DestroySampler(
         renderer->logicalDevice,
         vulkanSampler->sampler,
         NULL);
+
+    VULKAN_INTERNAL_ReleaseBindlessHandle(&renderer->bindlessSamplers, vulkanSampler->bindlessHandle);
 
     SDL_free(vulkanSampler);
 }
@@ -4288,8 +4357,6 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessSampler(
     VulkanRenderer *renderer,
     VkSampler sampler)
 {
-    Uint32 slot = SDL_AddAtomicU32(&renderer->bindlessSamplerCount, 1);
-
     VkDescriptorImageInfo imageInfo;
     imageInfo.sampler = sampler;
     imageInfo.imageView = VK_NULL_HANDLE;
@@ -4300,23 +4367,13 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessSampler(
     writeDescriptorSet.pNext = NULL;
     writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
     writeDescriptorSet.dstBinding = 0;
-    writeDescriptorSet.dstArrayElement = slot;
     writeDescriptorSet.descriptorCount = 1;
     writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     writeDescriptorSet.pImageInfo = &imageInfo;
     writeDescriptorSet.pBufferInfo = NULL;
     writeDescriptorSet.pTexelBufferView = NULL;
 
-    SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
-    renderer->vkUpdateDescriptorSets(
-        renderer->logicalDevice,
-        1,
-        &writeDescriptorSet,
-        0,
-        NULL);
-    SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
-
-    return ((Uint64)1 << 32) | slot;
+    return VULKAN_INTERNAL_AssignBindlessHandle(renderer, &renderer->bindlessSamplers, &writeDescriptorSet);
 }
 
 static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessImageView(
@@ -4325,8 +4382,6 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessImageView(
     VkImageView imageView,
     VkImageLayout imageLayout)
 {
-    Uint32 slot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
-
     VkDescriptorImageInfo imageInfo;
     VkWriteDescriptorSet writeDescriptorSet;
 
@@ -4338,31 +4393,19 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessImageView(
     writeDescriptorSet.pNext = NULL;
     writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
     writeDescriptorSet.dstBinding = descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ? 2 : 3;
-    writeDescriptorSet.dstArrayElement = slot;
     writeDescriptorSet.descriptorCount = 1;
     writeDescriptorSet.descriptorType = descriptorType;
     writeDescriptorSet.pImageInfo = &imageInfo;
     writeDescriptorSet.pBufferInfo = NULL;
     writeDescriptorSet.pTexelBufferView = NULL;
 
-    SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
-    renderer->vkUpdateDescriptorSets(
-        renderer->logicalDevice,
-        1,
-        &writeDescriptorSet,
-        0,
-        NULL);
-    SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
-
-    return ((Uint64)1 << 32) | slot;
+    return VULKAN_INTERNAL_AssignBindlessHandle(renderer, &renderer->bindlessResources, &writeDescriptorSet);
 }
 
 static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessBuffer(
     VulkanRenderer *renderer,
     VkBuffer buffer)
 {
-    Uint32 slot = SDL_AddAtomicU32(&renderer->bindlessResourceCount, 1);
-
     VkDescriptorBufferInfo bufferInfo;
     bufferInfo.buffer = buffer;
     bufferInfo.offset = 0;
@@ -4373,23 +4416,13 @@ static SDL_GPUResourceHandle VULKAN_INTERNAL_AssignBindlessBuffer(
     writeDescriptorSet.pNext = NULL;
     writeDescriptorSet.dstSet = renderer->bindlessDescriptorSet;
     writeDescriptorSet.dstBinding = 7;
-    writeDescriptorSet.dstArrayElement = slot;
     writeDescriptorSet.descriptorCount = 1;
     writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writeDescriptorSet.pImageInfo = NULL;
     writeDescriptorSet.pBufferInfo = &bufferInfo;
     writeDescriptorSet.pTexelBufferView = NULL;
 
-    SDL_LockMutex(renderer->bindlessDescriptorSetWrite);
-    renderer->vkUpdateDescriptorSets(
-        renderer->logicalDevice,
-        1,
-        &writeDescriptorSet,
-        0,
-        NULL);
-    SDL_UnlockMutex(renderer->bindlessDescriptorSetWrite);
-
-    return ((Uint64)1 << 32) | slot;
+    return VULKAN_INTERNAL_AssignBindlessHandle(renderer, &renderer->bindlessResources, &writeDescriptorSet);
 }
 
 // Data Buffer
@@ -5261,7 +5294,10 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->windowLock);
 
     if (renderer->bindless) {
-        SDL_DestroyMutex(renderer->bindlessDescriptorSetWrite);
+        SDL_DestroyMutex(renderer->bindlessSamplers.lock);
+        SDL_DestroyMutex(renderer->bindlessResources.lock);
+        SDL_free(renderer->bindlessSamplers.freed);
+        SDL_free(renderer->bindlessResources.freed);
         renderer->vkDestroyDescriptorSetLayout(renderer->logicalDevice, renderer->bindlessDescriptorSetLayout, NULL);
         renderer->vkDestroyDescriptorPool(renderer->logicalDevice, renderer->bindlessDescriptorPool, NULL);
     }
@@ -13064,8 +13100,8 @@ static bool VULKAN_INTERNAL_PrepareVulkan(
         features->desiredVulkan12DeviceFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
         features->desiredVulkan12DeviceFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
 
-        renderer->bindlessSamplerCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
-        renderer->bindlessResourceCapacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
+        renderer->bindlessSamplers.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
+        renderer->bindlessResources.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
     }
 
     renderer->requireHardwareAcceleration = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN, false);
@@ -13665,29 +13701,47 @@ static SDL_GPUResourceHandle VULKAN_AcquireBufferHandle(
 
 static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
 {
+    renderer->bindlessSamplers.lock = SDL_CreateMutex();
+    renderer->bindlessResources.lock = SDL_CreateMutex();
+
+    renderer->bindlessSamplers.count = 0;
+    renderer->bindlessResources.count = 0;
+
+    renderer->bindlessSamplers.freeCapacity = 16;
+    renderer->bindlessSamplers.freeCount = 0;
+    renderer->bindlessSamplers.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessSamplers.freeCapacity);
+
+    renderer->bindlessResources.freeCapacity = 16;
+    renderer->bindlessResources.freeCount = 0;
+    renderer->bindlessResources.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessResources.freeCapacity);
+
     VkShaderStageFlags shaderStage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     VkDescriptorSetLayoutBinding descriptorSetLayoutBinding[4];
 
     descriptorSetLayoutBinding[0].binding = 0;
-    descriptorSetLayoutBinding[0].descriptorCount = renderer->bindlessSamplerCapacity;
+    descriptorSetLayoutBinding[0].descriptorCount = renderer->bindlessSamplers.capacity;
     descriptorSetLayoutBinding[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     descriptorSetLayoutBinding[0].stageFlags = shaderStage;
     descriptorSetLayoutBinding[0].pImmutableSamplers = NULL;
 
     descriptorSetLayoutBinding[1].binding = 2;
-    descriptorSetLayoutBinding[1].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[1].descriptorCount = renderer->bindlessResources.capacity;
     descriptorSetLayoutBinding[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     descriptorSetLayoutBinding[1].stageFlags = shaderStage;
     descriptorSetLayoutBinding[1].pImmutableSamplers = NULL;
 
     descriptorSetLayoutBinding[2].binding = 3;
-    descriptorSetLayoutBinding[2].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[2].descriptorCount = renderer->bindlessResources.capacity;
     descriptorSetLayoutBinding[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     descriptorSetLayoutBinding[2].stageFlags = shaderStage;
     descriptorSetLayoutBinding[2].pImmutableSamplers = NULL;
 
     descriptorSetLayoutBinding[3].binding = 7;
-    descriptorSetLayoutBinding[3].descriptorCount = renderer->bindlessResourceCapacity;
+    descriptorSetLayoutBinding[3].descriptorCount = renderer->bindlessResources.capacity;
     descriptorSetLayoutBinding[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorSetLayoutBinding[3].stageFlags = shaderStage;
     descriptorSetLayoutBinding[3].pImmutableSamplers = NULL;
@@ -13723,13 +13777,13 @@ static bool VULKAN_INTERNAL_CreateBindlessResources(VulkanRenderer *renderer)
 
     VkDescriptorPoolSize poolSizes[4];
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-    poolSizes[0].descriptorCount = renderer->bindlessSamplerCapacity;
+    poolSizes[0].descriptorCount = renderer->bindlessSamplers.capacity;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    poolSizes[1].descriptorCount = renderer->bindlessResourceCapacity;
+    poolSizes[1].descriptorCount = renderer->bindlessResources.capacity;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[2].descriptorCount = renderer->bindlessResourceCapacity;
+    poolSizes[2].descriptorCount = renderer->bindlessResources.capacity;
     poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[3].descriptorCount = renderer->bindlessResourceCapacity;
+    poolSizes[3].descriptorCount = renderer->bindlessResources.capacity;
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo;
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -14174,10 +14228,6 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         renderer->allocationsToDefragCapacity * sizeof(VulkanMemoryAllocation *));
 
     if (renderer->bindless) {
-        SDL_SetAtomicU32(&renderer->bindlessSamplerCount, 0);
-        SDL_SetAtomicU32(&renderer->bindlessResourceCount, 0);
-        renderer->bindlessDescriptorSetWrite = SDL_CreateMutex();
-
         bool success = VULKAN_INTERNAL_CreateBindlessResources(renderer);
         
         if (!success) {
