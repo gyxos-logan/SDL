@@ -8930,7 +8930,17 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
                 &shaderModel,
                 sizeof(shaderModel));
             if (SUCCEEDED(res) && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
-                supports_bindless = true;
+                D3D12_FEATURE_DATA_D3D12_OPTIONS featureOptions;
+                SDL_zero(featureOptions);
+
+                res = ID3D12Device_CheckFeatureSupport(
+                    device,
+                    D3D12_FEATURE_D3D12_OPTIONS,
+                    &featureOptions,
+                    sizeof(featureOptions));
+                if (SUCCEEDED(res) && featureOptions.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3) {
+                    supports_bindless = true;
+                }
             }
         }
 
