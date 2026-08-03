@@ -4661,7 +4661,8 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 typedef Uint64 SDL_GPUResourceHandle;
 
 /**
- * Resolves a sampler to a handle.
+ * Resolves a sampler to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
  *
  * \param command_buffer a command buffer.
  * \param sampler a sampler to be resolved.
@@ -4674,7 +4675,8 @@ extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUSamplerHandle(
     SDL_GPUSampler *sampler);
 
 /**
- * Resolves a texture to a handle.
+ * Resolves a texture to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
  *
  * \param command_buffer a command buffer.
  * \param texture a texture to be resolved.
@@ -4689,7 +4691,8 @@ extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUTextureHandle(
     const SDL_GPUStorageTextureReadWriteBinding *binding);
 
 /**
- * Resolves a buffer to a handle.
+ * Resolves a buffer to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
  *
  * \param command_buffer a command buffer.
  * \param buffer a buffer to be resolved.

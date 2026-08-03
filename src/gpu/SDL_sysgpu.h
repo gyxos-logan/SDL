@@ -1230,8 +1230,8 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(ReleaseFence, name)                  \
     ASSIGN_DRIVER_FUNC(SupportsTextureFormat, name)         \
     ASSIGN_DRIVER_FUNC(SupportsSampleCount, name)           \
-    ASSIGN_DRIVER_FUNC(AcquireSamplerHandle, name)                \
-    ASSIGN_DRIVER_FUNC(AcquireTextureHandle, name)                \
+    ASSIGN_DRIVER_FUNC(AcquireSamplerHandle, name)          \
+    ASSIGN_DRIVER_FUNC(AcquireTextureHandle, name)          \
     ASSIGN_DRIVER_FUNC(AcquireBufferHandle, name)
 
 typedef struct SDL_GPUBootstrap
