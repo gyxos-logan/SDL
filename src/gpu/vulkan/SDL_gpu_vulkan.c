@@ -7105,6 +7105,8 @@ static SDL_GPUSampler *VULKAN_CreateSampler(
     if (renderer->bindless) {
         vulkanSampler->bindlessHandle =
             VULKAN_INTERNAL_AssignBindlessSampler(renderer, vulkanSampler->sampler);
+    } else {
+        vulkanSampler->bindlessHandle = 0;
     }
 
     return (SDL_GPUSampler *)vulkanSampler;
