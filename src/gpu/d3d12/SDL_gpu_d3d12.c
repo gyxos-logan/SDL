@@ -764,6 +764,7 @@ typedef struct D3D12UniformBuffer D3D12UniformBuffer;
 typedef struct D3D12DescriptorHeap D3D12DescriptorHeap;
 typedef struct D3D12StagingDescriptor D3D12StagingDescriptor;
 typedef struct D3D12TextureDownload D3D12TextureDownload;
+typedef struct D3D12BindlessSlotAllocator D3D12BindlessSlotAllocator;
 
 typedef struct D3D12Fence
 {
@@ -812,6 +813,9 @@ struct D3D12StagingDescriptor
     D3D12StagingDescriptorPool *pool;
     D3D12DescriptorHeap *heap;
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle;
+    Uint32 cpuHandleIndex;
+
+    SDL_GPUResourceHandle bindlessHandle;
 };
 
 typedef struct D3D12TextureContainer
@@ -910,6 +914,20 @@ typedef struct WinPixEventRuntimeFns {
     pfnSetMarkerOnCommandList pSetMarkerOnCommandList;
 } WinPixEventRuntimeFns;
 #endif
+
+struct D3D12BindlessSlotAllocator
+{
+    SDL_Mutex *lock;
+
+    D3D12DescriptorHeap *descriptorHeap;
+
+    Uint32 capacity;
+    Uint32 count;
+
+    Uint32 *freed;
+    Uint32 freeCount;
+    Uint32 freeCapacity;
+};
 
 struct D3D12Renderer
 {
@@ -1027,6 +1045,10 @@ struct D3D12Renderer
     XrSystemId xrSystemId;
     XrInstancePfns *xr;
 #endif
+
+    bool bindless;
+    D3D12BindlessSlotAllocator bindlessSamplers;
+    D3D12BindlessSlotAllocator bindlessResources;
 };
 
 struct D3D12CommandBuffer
@@ -1155,6 +1177,8 @@ struct D3D12Shader
     Uint32 numUniformBuffers;
     Uint32 numStorageBuffers;
     Uint32 numStorageTextures;
+
+    bool bindless;
 };
 
 typedef struct D3D12GraphicsRootSignature
@@ -1174,6 +1198,8 @@ typedef struct D3D12GraphicsRootSignature
     Sint32 fragmentStorageBufferRootIndex;
 
     Sint32 fragmentUniformBufferRootIndex[MAX_UNIFORM_BUFFERS_PER_STAGE];
+
+    bool bindless;
 } D3D12GraphicsRootSignature;
 
 struct D3D12GraphicsPipeline
@@ -1200,6 +1226,8 @@ typedef struct D3D12ComputeRootSignature
     Sint32 readWriteStorageTextureRootIndex;
     Sint32 readWriteStorageBufferRootIndex;
     Sint32 uniformBufferRootIndex[MAX_UNIFORM_BUFFERS_PER_STAGE];
+
+    bool bindless;
 } D3D12ComputeRootSignature;
 
 struct D3D12ComputePipeline
@@ -1363,7 +1391,64 @@ static void D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
     }
 }
 
+static SDL_GPUResourceHandle D3D12_INTERNAL_AssignBindlessHandle(
+    D3D12Renderer *renderer,
+    D3D12BindlessSlotAllocator *slots,
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+    D3D12_DESCRIPTOR_HEAP_TYPE heapType)
+{
+    Uint32 slot;
+
+    SDL_LockMutex(slots->lock);
+
+    if (slots->freeCount > 0) {
+        slots->freeCount--;
+        slot = slots->freed[slots->freeCount];
+    } else if (slots->count < slots->capacity) {
+        slot = slots->count++;
+    } else {
+        SDL_UnlockMutex(slots->lock);
+        SDL_SetError("No GPU bindings available");
+        return 0;
+    }
+
+    D3D12DescriptorHeap *heap = slots->descriptorHeap;
+    D3D12_CPU_DESCRIPTOR_HANDLE gpuHeapCpuHandle;
+    gpuHeapCpuHandle.ptr = heap->descriptorHeapCPUStart.ptr + (slot * heap->descriptorSize);
+
+    ID3D12Device_CopyDescriptorsSimple(
+        renderer->device,
+        1,
+        gpuHeapCpuHandle,
+        cpuHandle,
+        heapType);
+
+    SDL_UnlockMutex(slots->lock);
+
+    return ((Uint64)1 << 32) | slot;
+}
+
+static void D3D12_INTERNAL_ReleaseBindlessHandle(
+    D3D12BindlessSlotAllocator *slots,
+    SDL_GPUResourceHandle handle)
+{
+    if (handle == 0) {
+        return;
+    }
+
+    SDL_LockMutex(slots->lock);
+    EXPAND_ARRAY_IF_NEEDED(
+        slots->freed,
+        Uint32,
+        slots->freeCount + 1,
+        slots->freeCapacity,
+        slots->freeCapacity * 2);
+    slots->freed[slots->freeCount++] = (Uint32)handle;
+    SDL_UnlockMutex(slots->lock);
+}
+
 static void D3D12_INTERNAL_DestroyBuffer(
+    D3D12Renderer *renderer,
     D3D12Buffer *buffer)
 {
     if (!buffer) {
@@ -1380,6 +1465,14 @@ static void D3D12_INTERNAL_DestroyBuffer(
         &buffer->srvDescriptor);
     D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
         &buffer->uavDescriptor);
+
+    D3D12_INTERNAL_ReleaseBindlessHandle(
+        &renderer->bindlessResources,
+        buffer->srvDescriptor.bindlessHandle);
+
+    D3D12_INTERNAL_ReleaseBindlessHandle(
+        &renderer->bindlessResources,
+        buffer->uavDescriptor.bindlessHandle);
 
     if (buffer->handle) {
         ID3D12Resource_Release(buffer->handle);
@@ -1427,6 +1520,7 @@ static void D3D12_INTERNAL_ReleaseBufferContainer(
 }
 
 static void D3D12_INTERNAL_DestroyTexture(
+    D3D12Renderer *renderer,
     D3D12Texture *texture)
 {
     if (!texture) {
@@ -1445,6 +1539,10 @@ static void D3D12_INTERNAL_DestroyTexture(
         D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
             &subresource->uavHandle);
 
+        D3D12_INTERNAL_ReleaseBindlessHandle(
+            &renderer->bindlessResources,
+            subresource->uavHandle.bindlessHandle);
+
         D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
             &subresource->dsvHandle);
     }
@@ -1452,6 +1550,10 @@ static void D3D12_INTERNAL_DestroyTexture(
 
     D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
         &texture->srvHandle);
+
+    D3D12_INTERNAL_ReleaseBindlessHandle(
+        &renderer->bindlessResources,
+        texture->srvHandle.bindlessHandle);
 
     // XR swapchain images are owned by the OpenXR runtime
     if (texture->resource && !texture->externallyManaged) {
@@ -1503,10 +1605,15 @@ static void D3D12_INTERNAL_ReleaseTextureContainer(
 }
 
 static void D3D12_INTERNAL_DestroySampler(
+    D3D12Renderer *renderer,
     D3D12Sampler *sampler)
 {
     D3D12_INTERNAL_ReleaseStagingDescriptorHandle(
         &sampler->handle);
+
+    D3D12_INTERNAL_ReleaseBindlessHandle(
+        &renderer->bindlessSamplers,
+        sampler->handle.bindlessHandle);
 
     SDL_free(sampler);
 }
@@ -1661,6 +1768,7 @@ static void D3D12_INTERNAL_DestroyRenderer(D3D12Renderer *renderer)
     // Release uniform buffers
     for (Uint32 i = 0; i < renderer->uniformBufferPoolCount; i += 1) {
         D3D12_INTERNAL_DestroyBuffer(
+            renderer,
             renderer->uniformBufferPool[i]->buffer);
         SDL_free(renderer->uniformBufferPool[i]);
     }
@@ -2504,6 +2612,10 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     D3D12Shader *vertexShader,
     D3D12Shader *fragmentShader)
 {
+    if (vertexShader->bindless != fragmentShader->bindless) {
+        return NULL;
+    }
+
     D3D12_ROOT_PARAMETER rootParameters[16];    // 2 stages * (1 sampler + 3 srvs + 4 cbvs)
     D3D12_DESCRIPTOR_RANGE descriptorRanges[8]; // 2 stages * (1 sampler + 3 srvs)
     Uint32 parameterCount = 0;
@@ -2534,6 +2646,8 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         d3d12GraphicsRootSignature->vertexUniformBufferRootIndex[i] = -1;
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = -1;
     }
+
+    d3d12GraphicsRootSignature->bindless = vertexShader->bindless && fragmentShader->bindless;
 
     if (vertexShader->num_samplers > 0) {
         // Vertex Samplers
@@ -2589,7 +2703,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
         parameterCount += 1;
     }
 
-    if (vertexShader->numStorageBuffers) {
+    if (!renderer->bindless && vertexShader->numStorageBuffers) {
         // Vertex storage buffers
         descriptorRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         descriptorRange.NumDescriptors = vertexShader->numStorageBuffers;
@@ -2612,7 +2726,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < vertexShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 1;
+        rootParameter.Descriptor.RegisterSpace = d3d12GraphicsRootSignature->bindless ? 0 : 1;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->vertexUniformBufferRootIndex[i] = parameterCount;
@@ -2696,7 +2810,7 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     for (Uint32 i = 0; i < fragmentShader->numUniformBuffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 3;
+        rootParameter.Descriptor.RegisterSpace = d3d12GraphicsRootSignature->bindless ? 1 : 3;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         rootParameters[parameterCount] = rootParameter;
         d3d12GraphicsRootSignature->fragmentUniformBufferRootIndex[i] = parameterCount;
@@ -2710,6 +2824,10 @@ static D3D12GraphicsRootSignature *D3D12_INTERNAL_CreateGraphicsRootSignature(
     rootSignatureDesc.NumStaticSamplers = 0;
     rootSignatureDesc.pStaticSamplers = NULL;
     rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    if (d3d12GraphicsRootSignature->bindless) {
+        rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    }
 
     // Serialize the root signature
     ID3DBlob *serializedRootSignature;
@@ -2810,6 +2928,8 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     SDL_zeroa(rootParameters);
     SDL_zeroa(descriptorRanges);
     SDL_zero(rootParameter);
+
+    d3d12ComputeRootSignature->bindless = renderer->bindless;
 
     d3d12ComputeRootSignature->samplerRootIndex = -1;
     d3d12ComputeRootSignature->samplerTextureRootIndex = -1;
@@ -2931,7 +3051,7 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     for (Uint32 i = 0; i < createInfo->num_uniform_buffers; i += 1) {
         rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParameter.Descriptor.ShaderRegister = i;
-        rootParameter.Descriptor.RegisterSpace = 2;
+        rootParameter.Descriptor.RegisterSpace = d3d12ComputeRootSignature->bindless ? 0 : 2;
         rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // ALL is used for compute
         rootParameters[parameterCount] = rootParameter;
         d3d12ComputeRootSignature->uniformBufferRootIndex[i] = parameterCount;
@@ -2944,6 +3064,10 @@ static D3D12ComputeRootSignature *D3D12_INTERNAL_CreateComputeRootSignature(
     rootSignatureDesc.NumStaticSamplers = 0;
     rootSignatureDesc.pStaticSamplers = NULL;
     rootSignatureDesc.Flags = (D3D12_ROOT_SIGNATURE_FLAGS)0;
+
+    if (d3d12ComputeRootSignature->bindless) {
+        rootSignatureDesc.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED | D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    }
 
     ID3DBlob *serializedRootSignature;
     ID3DBlob *errorBlob;
@@ -3174,6 +3298,7 @@ static bool D3D12_INTERNAL_AssignStagingDescriptorHandle(
 
     descriptor = &pool->freeDescriptors[pool->freeDescriptorCount - 1];
     SDL_memcpy(cpuDescriptor, descriptor, sizeof(D3D12StagingDescriptor));
+    cpuDescriptor->bindlessHandle = 0;
     pool->freeDescriptorCount -= 1;
 
     SDL_UnlockMutex(pool->lock);
@@ -3343,6 +3468,15 @@ static SDL_GPUSampler *D3D12_CreateSampler(
 
     // Ignore name property because it is not applicable to D3D12.
 
+    if (renderer->bindless) {
+        sampler->handle.bindlessHandle =
+            D3D12_INTERNAL_AssignBindlessHandle(
+                renderer,
+                &renderer->bindlessSamplers,
+                sampler->handle.cpuHandle,
+                D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+    }
+
     return (SDL_GPUSampler *)sampler;
 }
 
@@ -3354,6 +3488,10 @@ static SDL_GPUShader *D3D12_CreateShader(
     void *bytecode;
     size_t bytecodeSize;
     D3D12Shader *shader;
+
+    if (renderer->bindless && (createinfo->num_samplers > 0 || createinfo->num_storage_buffers > 0 || createinfo->num_storage_textures > 0)) {
+        return NULL;
+    }
 
     if (!D3D12_INTERNAL_CreateShaderBytecode(
             renderer,
@@ -3377,6 +3515,8 @@ static SDL_GPUShader *D3D12_CreateShader(
 
     shader->bytecode = bytecode;
     shader->bytecodeSize = bytecodeSize;
+
+    shader->bindless = renderer->bindless;
 
     // Ignore name property because it is not applicable to D3D12.
 
@@ -3489,7 +3629,7 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
         (void **)&handle);
     if (FAILED(res)) {
         D3D12_INTERNAL_SetError(renderer, "Failed to create texture!", res);
-        D3D12_INTERNAL_DestroyTexture(texture);
+        D3D12_INTERNAL_DestroyTexture(renderer, texture);
         return NULL;
     }
 
@@ -3545,6 +3685,13 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
             handle,
             &srvDesc,
             texture->srvHandle.cpuHandle);
+
+        texture->srvHandle.bindlessHandle =
+            D3D12_INTERNAL_AssignBindlessHandle(
+                renderer,
+                &renderer->bindlessResources,
+                texture->srvHandle.cpuHandle,
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
 
     SDL_SetAtomicInt(&texture->referenceCount, 0);
@@ -3553,7 +3700,7 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
     texture->subresources = (D3D12TextureSubresource *)SDL_calloc(
         texture->subresourceCount, sizeof(D3D12TextureSubresource));
     if (!texture->subresources) {
-        D3D12_INTERNAL_DestroyTexture(texture);
+        D3D12_INTERNAL_DestroyTexture(renderer, texture);
         return NULL;
     }
     for (Uint32 layerIndex = 0; layerIndex < layerCount; layerIndex += 1) {
@@ -3679,6 +3826,15 @@ static D3D12Texture *D3D12_INTERNAL_CreateTexture(
                     NULL,
                     &uavDesc,
                     texture->subresources[subresourceIndex].uavHandle.cpuHandle);
+
+                if (renderer->bindless) {
+                    texture->subresources[subresourceIndex].uavHandle.bindlessHandle =
+                        D3D12_INTERNAL_AssignBindlessHandle(
+                            renderer,
+                            &renderer->bindlessResources,
+                            texture->subresources[subresourceIndex].uavHandle.cpuHandle,
+                            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                }
             }
         }
     }
@@ -3838,7 +3994,7 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
         (void **)&handle);
     if (FAILED(res)) {
         D3D12_INTERNAL_SetError(renderer, "Could not create buffer!", res);
-        D3D12_INTERNAL_DestroyBuffer(buffer);
+        D3D12_INTERNAL_DestroyBuffer(renderer, buffer);
         return NULL;
     }
 
@@ -3869,6 +4025,15 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
             NULL, // TODO: support counters?
             &uavDesc,
             buffer->uavDescriptor.cpuHandle);
+
+        if (renderer->bindless) {
+            buffer->uavDescriptor.bindlessHandle =
+                D3D12_INTERNAL_AssignBindlessHandle(
+                    renderer,
+                    &renderer->bindlessResources,
+                    buffer->uavDescriptor.cpuHandle,
+                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        }
     }
 
     if (
@@ -3893,6 +4058,15 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
             handle,
             &srvDesc,
             buffer->srvDescriptor.cpuHandle);
+
+        if (renderer->bindless) {
+            buffer->srvDescriptor.bindlessHandle =
+                D3D12_INTERNAL_AssignBindlessHandle(
+                    renderer,
+                    &renderer->bindlessResources,
+                    buffer->srvDescriptor.cpuHandle,
+                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        }
     }
 
     buffer->virtualAddress = 0;
@@ -3910,7 +4084,7 @@ static D3D12Buffer *D3D12_INTERNAL_CreateBuffer(
             (void **)&buffer->mapPointer);
         if (FAILED(res)) {
             D3D12_INTERNAL_SetError(renderer, "Failed to map upload buffer!", res);
-            D3D12_INTERNAL_DestroyBuffer(buffer);
+            D3D12_INTERNAL_DestroyBuffer(renderer, buffer);
             return NULL;
         }
     }
@@ -4990,6 +5164,24 @@ static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuff
         heaps);
 }
 
+static void D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
+{
+    ID3D12DescriptorHeap *heaps[2];
+    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessResources.descriptorHeap;
+    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessSamplers.descriptorHeap;
+
+    commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
+    commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
+
+    heaps[0] = viewHeap->handle;
+    heaps[1] = samplerHeap->handle;
+
+    ID3D12GraphicsCommandList_SetDescriptorHeaps(
+        commandBuffer->graphicsCommandList,
+        2,
+        heaps);
+}
+
 static void D3D12_INTERNAL_WriteGPUDescriptors(
     D3D12CommandBuffer *commandBuffer,
     D3D12_DESCRIPTOR_HEAP_TYPE heapType,
@@ -5035,7 +5227,17 @@ static void D3D12_INTERNAL_BindGraphicsResources(
 
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
-        D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        if (graphicsPipeline->rootSignature->bindless) {
+            D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
+            commandBuffer->needVertexSamplerBind = false;
+            commandBuffer->needVertexStorageTextureBind = false;
+            commandBuffer->needVertexStorageBufferBind = false;
+            commandBuffer->needFragmentSamplerBind = false;
+            commandBuffer->needFragmentStorageTextureBind = false;
+            commandBuffer->needFragmentStorageBufferBind = false;
+        } else {
+            D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        }
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
@@ -5675,7 +5877,16 @@ static void D3D12_INTERNAL_BindComputeResources(
 
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
-        D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+        if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
+            if (computePipeline->rootSignature->bindless) {
+                D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
+                commandBuffer->needComputeSamplerBind = false;
+                commandBuffer->needComputeReadOnlyStorageTextureBind = false;
+                commandBuffer->needComputeReadOnlyStorageBufferBind = false;
+            } else {
+                D3D12_INTERNAL_SetGPUDescriptorHeaps(commandBuffer);
+            }
+        }
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
@@ -6720,7 +6931,7 @@ static void D3D12_INTERNAL_DestroySwapchain(
 {
     renderer->commandQueue->PresentX(0, NULL, NULL);
     for (Uint32 i = 0; i < windowData->swapchainTextureCount; i += 1) {
-        D3D12_INTERNAL_DestroyTexture(windowData->textureContainers[i].activeTexture);
+        D3D12_INTERNAL_DestroyTexture(renderer, windowData->textureContainers[i].activeTexture);
     }
 }
 
@@ -6736,7 +6947,7 @@ static bool D3D12_INTERNAL_ResizeSwapchain(
 
     // Clean up the previous swapchain textures
     for (Uint32 i = 0; i < windowData->swapchainTextureCount; i += 1) {
-        D3D12_INTERNAL_DestroyTexture(windowData->textureContainers[i].activeTexture);
+        D3D12_INTERNAL_DestroyTexture(renderer, windowData->textureContainers[i].activeTexture);
     }
 
     // Create a new swapchain
@@ -7697,6 +7908,7 @@ static void D3D12_INTERNAL_PerformPendingDestroys(D3D12Renderer *renderer)
     for (Sint32 i = renderer->buffersToDestroyCount - 1; i >= 0; i -= 1) {
         if (SDL_GetAtomicInt(&renderer->buffersToDestroy[i]->referenceCount) == 0) {
             D3D12_INTERNAL_DestroyBuffer(
+                renderer,
                 renderer->buffersToDestroy[i]);
 
             renderer->buffersToDestroy[i] = renderer->buffersToDestroy[renderer->buffersToDestroyCount - 1];
@@ -7707,6 +7919,7 @@ static void D3D12_INTERNAL_PerformPendingDestroys(D3D12Renderer *renderer)
     for (Sint32 i = renderer->texturesToDestroyCount - 1; i >= 0; i -= 1) {
         if (SDL_GetAtomicInt(&renderer->texturesToDestroy[i]->referenceCount) == 0) {
             D3D12_INTERNAL_DestroyTexture(
+                renderer,
                 renderer->texturesToDestroy[i]);
 
             renderer->texturesToDestroy[i] = renderer->texturesToDestroy[renderer->texturesToDestroyCount - 1];
@@ -7717,6 +7930,7 @@ static void D3D12_INTERNAL_PerformPendingDestroys(D3D12Renderer *renderer)
     for (Sint32 i = renderer->samplersToDestroyCount - 1; i >= 0; i -= 1) {
         if (SDL_GetAtomicInt(&renderer->samplersToDestroy[i]->referenceCount) == 0) {
             D3D12_INTERNAL_DestroySampler(
+                renderer,
                 renderer->samplersToDestroy[i]);
 
             renderer->samplersToDestroy[i] = renderer->samplersToDestroy[renderer->samplersToDestroyCount - 1];
@@ -8493,7 +8707,9 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
     // have to fuss with loading D3D in the first place.
     bool has_dxbc = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXBC_BOOLEAN, false);
     bool has_dxil = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_DXIL_BOOLEAN, false);
+    bool bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
     bool supports_dxil = false;
+    bool supports_bindless = false;
     // TODO SM7: bool has_spirv = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, false);
     // TODO SM7: bool supports_spirv = false;
     if (!has_dxbc && !has_dxil) {
@@ -8638,6 +8854,30 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
             }
         }
 
+        if (bindless) {
+            D3D12_FEATURE_DATA_SHADER_MODEL shaderModel;
+            shaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+
+            res = ID3D12Device_CheckFeatureSupport(
+                device,
+                D3D12_FEATURE_SHADER_MODEL,
+                &shaderModel,
+                sizeof(shaderModel));
+            if (SUCCEEDED(res) && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
+                D3D12_FEATURE_DATA_D3D12_OPTIONS featureOptions;
+                SDL_zero(featureOptions);
+
+                res = ID3D12Device_CheckFeatureSupport(
+                    device,
+                    D3D12_FEATURE_D3D12_OPTIONS,
+                    &featureOptions,
+                    sizeof(featureOptions));
+                if (SUCCEEDED(res) && featureOptions.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3) {
+                    supports_bindless = true;
+                }
+            }
+        }
+
         ID3D12Device_Release(device);
     }
 
@@ -8654,6 +8894,11 @@ static bool D3D12_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
 
     if (!supports_dxil && !has_dxbc) {
         SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "D3D12: DXIL is not supported and DXBC is not being provided");
+        return false;
+    }
+
+    if (bindless && !supports_bindless) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "D3D12: Shader Model 6.6 is required");
         return false;
     }
 
@@ -9034,7 +9279,7 @@ static XrResult D3D12_DestroyXRSwapchain(
             return XR_ERROR_HANDLE_INVALID;
         }
 
-        D3D12_INTERNAL_DestroyTexture(container);
+        D3D12_INTERNAL_DestroyTexture(renderer, container);
 
         // Free the container now that it's unused
         SDL_free(container);
@@ -9293,6 +9538,124 @@ static XrResult D3D12_CreateXRSession(
     SDL_SetError("SDL not built with OpenXR support");
     return XR_ERROR_FUNCTION_UNSUPPORTED;
 #endif
+}
+
+static SDL_GPUResourceHandle D3D12_AcquireSamplerHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUSampler *sampler)
+{
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12Sampler *d3d12Sampler = (D3D12Sampler *)sampler;
+
+    D3D12_INTERNAL_TrackSampler(d3d12CommandBuffer, d3d12Sampler);
+
+    return d3d12Sampler->handle.bindlessHandle;
+}
+
+static SDL_GPUResourceHandle D3D12_AcquireTextureHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
+{
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12TextureContainer *container = (D3D12TextureContainer *)texture;
+
+    if (binding != NULL) {
+        Uint32 i = d3d12CommandBuffer->computeReadWriteStorageTextureSubresourceCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_TEXTURES) {
+            // TODO set error
+            return 0;
+        }
+
+        D3D12TextureSubresource *subresource = D3D12_INTERNAL_PrepareTextureSubresourceForWrite(
+            d3d12CommandBuffer,
+            container,
+            binding->layer,
+            binding->mip_level,
+            binding->cycle,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        d3d12CommandBuffer->computeReadWriteStorageTextureSubresources[i] = subresource;
+        d3d12CommandBuffer->computeReadWriteStorageTextureDescriptorHandles[i] = subresource->uavHandle.cpuHandle;
+
+        D3D12_INTERNAL_TrackTexture(
+            d3d12CommandBuffer,
+            subresource->parent);
+
+        return subresource->uavHandle.bindlessHandle;
+    }
+
+    D3D12Texture *activeTexture = container->activeTexture;
+
+    D3D12_INTERNAL_TrackTexture(d3d12CommandBuffer, activeTexture);
+
+    return activeTexture->srvHandle.bindlessHandle;
+}
+
+static SDL_GPUResourceHandle D3D12_AcquireBufferHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
+{
+    D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12BufferContainer *container = (D3D12BufferContainer *)buffer;
+
+    if (binding != NULL) {
+        Uint32 i = d3d12CommandBuffer->computeReadWriteStorageBufferCount++;
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
+        D3D12Buffer *writeBuffer = D3D12_INTERNAL_PrepareBufferForWrite(
+            d3d12CommandBuffer,
+            container,
+            binding->cycle,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        d3d12CommandBuffer->computeReadWriteStorageBuffers[i] = writeBuffer;
+        d3d12CommandBuffer->computeReadWriteStorageBufferDescriptorHandles[i] = writeBuffer->uavDescriptor.cpuHandle;
+
+        D3D12_INTERNAL_TrackBuffer(
+            d3d12CommandBuffer,
+            writeBuffer);
+        
+        return writeBuffer->uavDescriptor.bindlessHandle;
+    }
+
+    D3D12Buffer *activeBuffer = container->activeBuffer;
+
+    D3D12_INTERNAL_TrackBuffer(d3d12CommandBuffer, activeBuffer);
+
+    return activeBuffer->srvDescriptor.bindlessHandle;
+}
+
+static bool D3D12_INTERNAL_CreateBindlessResources(D3D12Renderer *renderer)
+{
+    renderer->bindlessSamplers.lock = SDL_CreateMutex();
+    renderer->bindlessResources.lock = SDL_CreateMutex();
+
+    renderer->bindlessSamplers.count = 0;
+    renderer->bindlessResources.count = 0;
+
+    renderer->bindlessSamplers.freeCapacity = 16;
+    renderer->bindlessSamplers.freeCount = 0;
+    renderer->bindlessSamplers.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessSamplers.freeCapacity);
+
+    renderer->bindlessResources.freeCapacity = 16;
+    renderer->bindlessResources.freeCount = 0;
+    renderer->bindlessResources.freed = SDL_malloc(
+        sizeof(Uint32) *
+        renderer->bindlessResources.freeCapacity);
+
+    renderer->bindlessSamplers.descriptorHeap = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, renderer->bindlessSamplers.capacity, false);
+    renderer->bindlessResources.descriptorHeap = D3D12_INTERNAL_CreateDescriptorHeap(renderer, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, renderer->bindlessResources.capacity, false);
+
+    return true;
 }
 
 static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
@@ -10015,6 +10378,16 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
     result->shader_formats = shaderFormats;
     result->debug_mode = debugMode;
     renderer->sdlGPUDevice = result;
+
+    renderer->bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
+    if (renderer->bindless) {
+        renderer->bindlessSamplers.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER, SDL_GPU_DEFAULT_BINDLESS_SAMPLERS);
+        renderer->bindlessResources.capacity = SDL_GetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER, SDL_GPU_DEFAULT_BINDLESS_RESOURCES);
+
+        if (!D3D12_INTERNAL_CreateBindlessResources(renderer)) {
+            return NULL; // TODO cleanup
+        }
+    }
 
     return result;
 }
