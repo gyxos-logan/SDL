@@ -687,6 +687,8 @@ struct MetalRenderer
     SDL_Mutex *disposeLock;
     SDL_Mutex *fenceLock;
     SDL_Mutex *windowLock;
+
+    bool bindless;
 };
 
 // Helper Functions
@@ -1364,6 +1366,10 @@ static SDL_GPUSampler *METAL_CreateSampler(
         MTLSamplerDescriptor *samplerDesc = [MTLSamplerDescriptor new];
         id<MTLSamplerState> sampler;
         MetalSampler *metalSampler;
+
+        if (renderer->bindless) {
+            samplerDesc.supportArgumentBuffers = true;
+        }
 
         samplerDesc.sAddressMode = SDLToMetal_SamplerAddressMode[createinfo->address_mode_u];
         samplerDesc.tAddressMode = SDLToMetal_SamplerAddressMode[createinfo->address_mode_v];
@@ -4346,6 +4352,14 @@ static bool METAL_PrepareDriver(SDL_VideoDevice *this, SDL_PropertiesID props)
         return false;
     }
 
+    bool bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
+
+    if (bindless) {
+        if (!@available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) {
+            return false;
+        }
+    }
+
     if (@available(macOS 10.14, iOS 13.0, tvOS 13.0, *)) {
         return (this->Metal_CreateView != NULL);
     }
@@ -4501,6 +4515,128 @@ static void METAL_INTERNAL_DestroyBlitResources(
         METAL_ReleaseGraphicsPipeline(driverData, renderer->blitPipelines[i].pipeline);
     }
     SDL_free(renderer->blitPipelines);
+}
+
+static SDL_GPUResourceHandle METAL_AcquireSamplerHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUSampler *sampler)
+{
+    MetalSampler *metalSampler = (MetalSampler *)sampler;
+
+    return metalSampler->handle.gpuResourceID._impl;
+}
+
+static SDL_GPUResourceHandle METAL_AcquireTextureHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
+{
+    MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+    MetalTextureContainer *container = (MetalTextureContainer *)texture;
+    MetalTexture *metalTexture = container->activeTexture;
+
+    if (binding != NULL) {
+        Uint32 i;
+        for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && metalCommandBuffer->computeReadWriteTextures[i] != nil; i += 1) {}
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
+        MetalTexture *writeTexture = METAL_INTERNAL_PrepareTextureForWrite(
+            metalCommandBuffer->renderer,
+            container,
+            binding->cycle);
+
+        if (container->header.info.usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE) {
+            [metalCommandBuffer->computeEncoder
+                useResource:writeTexture->handle
+                usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+        } else {
+            [metalCommandBuffer->computeEncoder
+                useResource:writeTexture->handle
+                usage:MTLResourceUsageWrite];
+        }
+
+        METAL_INTERNAL_TrackTexture(metalCommandBuffer, writeTexture);
+
+        id<MTLTexture> textureView = [writeTexture->handle newTextureViewWithPixelFormat:SDLToMetal_TextureFormat(container->header.info.format)
+            textureType:SDLToMetal_TextureType(container->header.info.type, false)
+                levels:NSMakeRange(binding->mip_level, 1)
+                slices:NSMakeRange(binding->layer, 1)];
+    
+        metalCommandBuffer->computeReadWriteTextures[i] = textureView;
+
+        return textureView.gpuResourceID._impl;
+    }
+
+    if (container->header.info.usage & (SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ)) {
+        [metalCommandBuffer->renderEncoder
+            useResource: metalTexture->handle
+            usage: MTLResourceUsageRead
+            stages: MTLRenderStageVertex | MTLRenderStageFragment];
+    }
+
+    if (container->header.info.usage & (SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) { // TODO: Do we need read-write or should that always have binding != null
+        [metalCommandBuffer->computeEncoder
+            useResource:metalTexture->handle
+            usage:MTLResourceUsageRead];
+    }
+
+    METAL_INTERNAL_TrackTexture(metalCommandBuffer, metalTexture);
+
+    return metalTexture->handle.gpuResourceID._impl;
+}
+
+static SDL_GPUResourceHandle METAL_AcquireBufferHandle(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
+{
+    MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+    MetalBufferContainer *container = (MetalBufferContainer *)buffer;
+    MetalBuffer *metalbuffer = container->activeBuffer;
+
+    if (binding != NULL) {
+        Uint32 i;
+        for (i = 0; i < MAX_COMPUTE_WRITE_BUFFERS && metalCommandBuffer->computeReadWriteTextures[i] != nil; i += 1) {}
+
+        if (i >= MAX_COMPUTE_WRITE_BUFFERS) {
+            // TODO set error
+            return 0;
+        }
+
+        MetalBuffer *writeBuffer = METAL_INTERNAL_PrepareBufferForWrite(
+            metalCommandBuffer->renderer,
+            container,
+            binding->cycle);
+
+        [metalCommandBuffer->computeEncoder
+            useResource:writeBuffer->handle
+            usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+
+        METAL_INTERNAL_TrackBuffer(
+            metalCommandBuffer,
+            writeBuffer);
+
+        metalCommandBuffer->computeReadWriteBuffers[i] = writeBuffer->handle;
+
+        return writeBuffer->handle.gpuAddress;
+    }
+
+    [metalCommandBuffer->renderEncoder
+        useResource: metalbuffer->handle
+        usage: MTLResourceUsageRead
+        stages: MTLRenderStageVertex | MTLRenderStageFragment];
+
+    [metalCommandBuffer->computeEncoder
+        useResource:metalbuffer->handle
+        usage:MTLResourceUsageRead];        
+
+    METAL_INTERNAL_TrackBuffer(metalCommandBuffer, metalbuffer);
+
+    return metalbuffer->handle.gpuAddress;
 }
 
 static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SDL_PropertiesID props)
@@ -4659,6 +4795,8 @@ static SDL_GPUDevice *METAL_CreateDevice(bool debugMode, bool preferLowPower, SD
         result->driverData = (SDL_GPURenderer *)renderer;
         result->shader_formats = SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_METALLIB;
         renderer->sdlGPUDevice = result;
+
+        renderer->bindless = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN, false);
 
         return result;
     }
