@@ -4611,6 +4611,66 @@ extern SDL_DECLSPEC void SDLCALL SDL_GDKResumeGPU(SDL_GPUDevice *device);
 
 #endif /* SDL_PLATFORM_GDK */
 
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_BOOLEAN          "SDL.gpu.device.create.feature.bindless"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_SAMPLERS_NUMBER  "SDL.gpu.device.create.feature.bindless.samplers"
+#define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_BINDLESS_RESOURCES_NUMBER "SDL.gpu.device.create.feature.bindless.resources"
+
+#ifndef SDL_GPU_DEFAULT_BINDLESS_SAMPLERS
+#define SDL_GPU_DEFAULT_BINDLESS_SAMPLERS 16
+#endif
+
+#ifndef SDL_GPU_DEFAULT_BINDLESS_RESOURCES
+#define SDL_GPU_DEFAULT_BINDLESS_RESOURCES 16384
+#endif
+
+typedef Uint64 SDL_GPUResourceHandle;
+
+/**
+ * Resolves a sampler to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
+ *
+ * \param command_buffer a command buffer.
+ * \param sampler a sampler to be resolved.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUSamplerHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUSampler *sampler);
+
+/**
+ * Resolves a texture to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
+ *
+ * \param command_buffer a command buffer.
+ * \param texture a texture to be resolved.
+ * \param binding leave NULL for read, supply for write or read + write access.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUTextureHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding);
+
+/**
+ * Resolves a buffer to a handle, should be called after
+ * SDL_BeginGPURenderPass / SDL_BeginGPUComputePass.
+ *
+ * \param command_buffer a command buffer.
+ * \param buffer a buffer to be resolved.
+ * \param binding leave NULL for read, supply for write or read + write access.
+ * \returns resource handle
+ *
+ * \since This function is not available in standard SDL.
+ */
+extern SDL_DECLSPEC SDL_GPUResourceHandle SDLCALL SDL_AcquireGPUBufferHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding);
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

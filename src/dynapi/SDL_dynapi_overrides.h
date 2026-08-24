@@ -1297,3 +1297,6 @@
 #define SDL_LoadSurface_IO SDL_LoadSurface_IO_REAL
 #define SDL_LoadSurface SDL_LoadSurface_REAL
 #define SDL_SetWindowFillDocument SDL_SetWindowFillDocument_REAL
+#define SDL_AcquireGPUSamplerHandle SDL_AcquireGPUSamplerHandle_REAL
+#define SDL_AcquireGPUTextureHandle SDL_AcquireGPUTextureHandle_REAL
+#define SDL_AcquireGPUBufferHandle SDL_AcquireGPUBufferHandle_REAL

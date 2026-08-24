@@ -1305,3 +1305,6 @@ SDL_DYNAPI_PROC(SDL_Surface*,SDL_RotateSurface,(SDL_Surface *a,float b),(a,b),re
 SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface_IO,(SDL_IOStream *a,bool b),(a,b),return)
 SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface,(const char *a),(a),return)
 SDL_DYNAPI_PROC(bool,SDL_SetWindowFillDocument,(SDL_Window *a,bool b),(a,b),return)
+SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_AcquireGPUSamplerHandle,(SDL_GPUCommandBuffer *a,SDL_GPUSampler *b),(a,b),return)
+SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_AcquireGPUTextureHandle,(SDL_GPUCommandBuffer *a,SDL_GPUTexture *b,const SDL_GPUStorageTextureReadWriteBinding *c),(a,b,c),return)
+SDL_DYNAPI_PROC(SDL_GPUResourceHandle,SDL_AcquireGPUBufferHandle,(SDL_GPUCommandBuffer *a,SDL_GPUBuffer *b,const SDL_GPUStorageBufferReadWriteBinding *c),(a,b,c),return)

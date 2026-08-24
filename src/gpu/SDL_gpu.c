@@ -3587,3 +3587,34 @@ SDL_GPUTextureFormat SDL_GetGPUTextureFormatFromPixelFormat(SDL_PixelFormat form
         return SDL_GPU_TEXTUREFORMAT_INVALID;
     }
 }
+
+SDL_GPUResourceHandle SDL_AcquireGPUSamplerHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUSampler *sampler)
+{
+    return COMMAND_BUFFER_DEVICE->AcquireSamplerHandle(
+        command_buffer,
+        sampler);
+}
+
+SDL_GPUResourceHandle SDL_AcquireGPUTextureHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUTexture *texture,
+    const SDL_GPUStorageTextureReadWriteBinding *binding)
+{
+    return COMMAND_BUFFER_DEVICE->AcquireTextureHandle(
+        command_buffer,
+        texture,
+        binding);
+}
+
+SDL_GPUResourceHandle SDL_AcquireGPUBufferHandle(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUBuffer *buffer,
+    const SDL_GPUStorageBufferReadWriteBinding *binding)
+{
+    return COMMAND_BUFFER_DEVICE->AcquireBufferHandle(
+        command_buffer,
+        buffer,
+        binding);
+}
