@@ -1171,8 +1171,6 @@ struct D3D12GraphicsPipeline
     Uint32 vertexStrides[MAX_VERTEX_BUFFERS];
 
     SDL_AtomicInt referenceCount;
-
-    bool bindless;
 };
 
 typedef struct D3D12ComputeRootSignature
@@ -4913,6 +4911,24 @@ static void D3D12_INTERNAL_PushUniformData(
     }
 }
 
+static void D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
+{
+    ID3D12DescriptorHeap *heaps[2];
+    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessResources.descriptorHeap;
+    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessSamplers.descriptorHeap;
+
+    commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
+    commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
+
+    heaps[0] = viewHeap->handle;
+    heaps[1] = samplerHeap->handle;
+
+    ID3D12GraphicsCommandList_SetDescriptorHeaps(
+        commandBuffer->graphicsCommandList,
+        2,
+        heaps);
+}
+
 static void D3D12_BindGraphicsPipeline(
     SDL_GPUCommandBuffer *commandBuffer,
     SDL_GPUGraphicsPipeline *graphicsPipeline)
@@ -4922,6 +4938,10 @@ static void D3D12_BindGraphicsPipeline(
     Uint32 i;
 
     d3d12CommandBuffer->currentGraphicsPipeline = pipeline;
+
+    if (pipeline->rootSignature->bindless && d3d12CommandBuffer->gpuDescriptorHeaps[0] == NULL) {
+        D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(d3d12CommandBuffer);
+    }
 
     // Set the pipeline state
     ID3D12GraphicsCommandList_SetPipelineState(d3d12CommandBuffer->graphicsCommandList, pipeline->pipelineState);
@@ -5205,24 +5225,6 @@ static void D3D12_INTERNAL_SetGPUDescriptorHeaps(D3D12CommandBuffer *commandBuff
         heaps);
 }
 
-static void D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(D3D12CommandBuffer *commandBuffer)
-{
-    ID3D12DescriptorHeap *heaps[2];
-    D3D12DescriptorHeap *viewHeap = commandBuffer->renderer->bindlessResources.descriptorHeap;
-    D3D12DescriptorHeap *samplerHeap = commandBuffer->renderer->bindlessSamplers.descriptorHeap;
-
-    commandBuffer->gpuDescriptorHeaps[0] = viewHeap;
-    commandBuffer->gpuDescriptorHeaps[1] = samplerHeap;
-
-    heaps[0] = viewHeap->handle;
-    heaps[1] = samplerHeap->handle;
-
-    ID3D12GraphicsCommandList_SetDescriptorHeaps(
-        commandBuffer->graphicsCommandList,
-        2,
-        heaps);
-}
-
 static void D3D12_INTERNAL_WriteGPUDescriptors(
     D3D12CommandBuffer *commandBuffer,
     D3D12_DESCRIPTOR_HEAP_TYPE heapType,
@@ -5269,7 +5271,6 @@ static void D3D12_INTERNAL_BindGraphicsResources(
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
         if (graphicsPipeline->rootSignature->bindless) {
-            D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
             commandBuffer->needVertexSamplerBind = false;
             commandBuffer->needVertexStorageTextureBind = false;
             commandBuffer->needVertexStorageBufferBind = false;
@@ -5713,13 +5714,17 @@ static void D3D12_BindComputePipeline(
     SDL_GPUComputePipeline *computePipeline)
 {
     D3D12CommandBuffer *d3d12CommandBuffer = (D3D12CommandBuffer *)commandBuffer;
+    D3D12ComputePipeline *pipeline = (D3D12ComputePipeline *)computePipeline;
 
     /* Acquire GPU descriptor heaps if we haven't yet */
     if (d3d12CommandBuffer->gpuDescriptorHeaps[0] == NULL) {
-        D3D12_INTERNAL_SetGPUDescriptorHeaps(d3d12CommandBuffer);
+        if (pipeline->rootSignature->bindless) {
+            D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(d3d12CommandBuffer);
+        } else {
+            D3D12_INTERNAL_SetGPUDescriptorHeaps(d3d12CommandBuffer);
+        }
     }
 
-    D3D12ComputePipeline *pipeline = (D3D12ComputePipeline *)computePipeline;
     D3D12_CPU_DESCRIPTOR_HANDLE cpuHandles[MAX_TEXTURE_SAMPLERS_PER_STAGE];
     D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
 
@@ -5920,7 +5925,6 @@ static void D3D12_INTERNAL_BindComputeResources(
     if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
         if (commandBuffer->gpuDescriptorHeaps[0] == NULL) {
             if (computePipeline->rootSignature->bindless) {
-                D3D12_INTERNAL_SetGPUBindlessDescriptorHeaps(commandBuffer);
                 commandBuffer->needComputeSamplerBind = false;
                 commandBuffer->needComputeReadOnlyStorageTextureBind = false;
                 commandBuffer->needComputeReadOnlyStorageBufferBind = false;
